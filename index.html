@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FlowTree 任务树洞</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <a class="brand" href="#/home" aria-label="FlowTree 首页">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span>
+          <strong>FlowTree</strong>
+          <small>任务树洞</small>
+        </span>
+      </a>
+
+      <nav class="main-nav" aria-label="主导航">
+        <a href="#/home" data-route-link="home">首页</a>
+        <a href="#/doing" data-route-link="doing">正在做</a>
+        <a href="#/daily" data-route-link="daily">今日任务</a>
+        <a href="#/boards" data-route-link="boards">总任务看板</a>
+        <a href="#/notes" data-route-link="notes">记事本</a>
+      </nav>
+
+      <div class="header-actions">
+        <span class="sync-status" id="syncStatus" aria-live="polite">仅本机</span>
+        <button class="account-button hidden" id="accountButton" type="button" data-action="sign-out" title="退出登录">
+          <span class="account-avatar" id="accountAvatar" aria-hidden="true">U</span>
+          <span id="accountLabel">账户</span>
+        </button>
+        <button class="icon-button" type="button" data-action="go-back" title="返回上一个界面" aria-label="返回上一个界面">←</button>
+        <button class="timer-status hidden" id="headerTimer" type="button" data-action="open-running-task"></button>
+        <button class="icon-button" type="button" data-action="reset-demo" title="重置示例数据" aria-label="重置示例数据">↺</button>
+      </div>
+    </header>
+
+    <main class="app-main" id="appView" tabindex="-1"></main>
+
+    <button class="floating-notes-button" type="button" data-action="open-notes" aria-label="快速记录">
+      <span aria-hidden="true">#</span>
+      <span>记录</span>
+    </button>
+
+    <aside class="side-drawer hidden" id="activityDrawer" aria-labelledby="activityTitle">
+      <header class="drawer-header">
+        <div>
+          <p class="eyebrow">Activity</p>
+          <h2 id="activityTitle">活动记录</h2>
+        </div>
+        <button class="icon-button" type="button" data-action="close-activity" aria-label="关闭活动记录">×</button>
+      </header>
+      <div id="activityDrawerBody"></div>
+    </aside>
+
+    <aside class="side-drawer notes-drawer hidden" id="notesDrawer" aria-labelledby="notesTitle">
+      <header class="drawer-header">
+        <div>
+          <p class="eyebrow">Notes</p>
+          <h2 id="notesTitle">快速记录</h2>
+        </div>
+        <button class="icon-button" type="button" data-action="close-notes" aria-label="关闭快速记录">×</button>
+      </header>
+      <div id="notesDrawerBody"></div>
+    </aside>
+
+    <div class="drawer-scrim hidden" id="drawerScrim" data-action="close-drawers"></div>
+
+    <div class="modal-backdrop hidden" id="formModal" role="dialog" aria-modal="true" aria-labelledby="formTitle">
+      <form class="dialog" id="recordForm">
+        <header class="dialog-header">
+          <div>
+            <p class="eyebrow" id="formEyebrow">FlowTree</p>
+            <h2 id="formTitle">编辑</h2>
+          </div>
+          <button class="icon-button" type="button" data-action="close-form" aria-label="关闭">×</button>
+        </header>
+        <div class="dialog-body" id="formBody"></div>
+        <footer class="dialog-actions" id="formActions">
+          <button class="secondary-button" type="button" data-action="close-form">取消</button>
+          <button class="primary-button" type="submit">保存</button>
+        </footer>
+      </form>
+    </div>
+
+    <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
+
+    <div class="auth-gate hidden" id="authGate">
+      <section class="auth-panel" aria-labelledby="authTitle">
+        <a class="brand auth-brand" href="#/home" aria-label="FlowTree">
+          <span class="brand-mark" aria-hidden="true">F</span>
+          <span>
+            <strong>FlowTree</strong>
+            <small>任务树洞</small>
+          </span>
+        </a>
+        <div>
+          <p class="eyebrow">Cloud workspace</p>
+          <h1 id="authTitle">登录后继续</h1>
+          <p class="auth-copy">你的任务、记录和时间计划会加密传输，并只对当前账户开放。</p>
+        </div>
+        <form class="auth-form" id="authForm">
+          <label id="authEmailField">
+            邮箱
+            <input id="authEmail" name="email" type="email" autocomplete="email" required />
+          </label>
+          <label>
+            密码
+            <input id="authPassword" name="password" type="password" autocomplete="current-password" minlength="6" required />
+          </label>
+          <p class="auth-message" id="authMessage" aria-live="polite"></p>
+          <button class="primary-button" id="authSubmitButton" type="submit">登录</button>
+          <div class="auth-secondary-actions" id="authSecondaryActions">
+            <button class="secondary-button" type="button" data-action="sign-up">创建账户</button>
+            <button class="text-button" type="button" data-action="request-password-reset">忘记密码</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="cloud-config.js"></script>
+    <script src="cloud.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
