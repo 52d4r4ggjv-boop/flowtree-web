@@ -1223,7 +1223,10 @@ function renderDoing() {
           <h1>正在做</h1>
           <p>这里集中显示每个总任务看板中被插旗的当前任务，不改变它们在任务树中的位置。</p>
         </div>
-        <span class="count-badge">${tasks.length}</span>
+        <div class="page-actions">
+          <span class="count-badge">${tasks.length}</span>
+          <button class="primary-button" type="button" data-action="quick-doing-task">添加任务</button>
+        </div>
       </header>
       ${
         tasks.length
@@ -1233,7 +1236,10 @@ function renderDoing() {
               <div>
                 <h2>还没有正在做的任务</h2>
                 <p>在具体任务页面点击“设为当前任务”，它就会出现在这里。</p>
-                <button class="primary-button" type="button" data-action="navigate-route" data-value="boards">查看总任务看板</button>
+                <div class="page-actions">
+                  <button class="primary-button" type="button" data-action="quick-doing-task">添加任务</button>
+                  <button class="secondary-button" type="button" data-action="navigate-route" data-value="boards">查看总任务看板</button>
+                </div>
               </div>
             </div>
           `
@@ -2313,6 +2319,34 @@ function openAddProjectForm() {
   });
 }
 
+function openQuickDoingForm() {
+  const projectOptions = state.projects
+    .map((project) => `<option value="${project.id}">${escapeHtml(project.name)}</option>`)
+    .join("");
+  openForm({
+    kind: "quick-doing",
+    title: "添加正在做任务",
+    eyebrow: "In Progress",
+    submitLabel: "添加并插旗",
+    body: `
+      <div class="field"><label>任务名称</label><input name="title" required autofocus placeholder="现在要推进什么？" /></div>
+      <div class="field">
+        <label>所属总任务看板</label>
+        <select name="projectId" required>
+          ${projectOptions}
+          <option value="__new__">+ 新建总任务看板</option>
+        </select>
+      </div>
+      <div class="field"><label>新看板名称（选择新建时填写）</label><input name="newProjectName" placeholder="例如：秋招准备" /></div>
+      <label class="inline-row"><span>同时加入今日任务</span><input name="addToday" type="checkbox" checked style="width:auto" /></label>
+      <details class="time-details">
+        <summary>安排时间（可选）</summary>
+        ${renderScheduleFields()}
+      </details>
+    `,
+  });
+}
+
 function openAddTaskForm(projectId, parentId = null, fromProjectCreation = false) {
   const project = getProject(projectId);
   const parent = getTask(parentId);
@@ -2513,6 +2547,44 @@ function handleFormSubmit(event) {
     syncTaskWithPlannedDate(task, "manual_schedule");
     closeForm();
     selectTask(task.id);
+    return;
+  }
+
+  if (activeForm.kind === "quick-doing") {
+    const title = String(data.get("title") || "").trim();
+    if (!title) return;
+    let project = null;
+    if (data.get("projectId") === "__new__") {
+      const name = String(data.get("newProjectName") || "").trim();
+      if (!name) {
+        showToast("请填写新看板名称。");
+        return;
+      }
+      project = createProject(name);
+    } else {
+      project = getProject(String(data.get("projectId") || ""));
+    }
+    if (!project) {
+      showToast("请先选择所属看板。");
+      return;
+    }
+    const schedule = getScheduleFromForm(data);
+    if (!validateSchedule(schedule)) return;
+    const task = createTask({
+      title,
+      projectId: project.id,
+      source: "doing",
+      ...schedule,
+    });
+    task.status = "in_progress";
+    task.updatedAt = nowIso();
+    project.currentTaskId = task.id;
+    state.histories.push(makeHistory(task.id, project.id, "flagged", { source: "doing_quick_add" }));
+    syncTaskWithPlannedDate(task, "doing_schedule");
+    if (data.get("addToday")) addTaskToToday(task.id, "doing_quick_add");
+    touchProject(project.id);
+    closeForm();
+    navigate("doing");
     return;
   }
 
@@ -3238,6 +3310,7 @@ async function handleAction(action, trigger) {
   if (action === "complete-branch") completeTask(id, true);
   if (action === "reopen-task") reopenTask(id);
   if (action === "quick-daily-task") openQuickDailyForm();
+  if (action === "quick-doing-task") openQuickDoingForm();
   if (action === "toggle-daily-pin") {
     state.dailyBoard.pinnedTaskIds = state.dailyBoard.pinnedTaskIds.includes(id)
       ? state.dailyBoard.pinnedTaskIds.filter((taskId) => taskId !== id)
