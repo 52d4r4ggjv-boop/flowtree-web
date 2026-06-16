@@ -922,7 +922,7 @@ button.breadcrumb-task:hover {
 
 .tree-line {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
+  grid-template-columns: 24px 18px minmax(0, 1fr) auto;
   gap: 5px;
   align-items: center;
   min-height: 36px;
@@ -933,6 +933,15 @@ button.breadcrumb-task:hover {
 
 .tree-line:hover {
   background: var(--surface-muted);
+}
+
+.tree-line.dragging {
+  opacity: 0.42;
+}
+
+.tree-line.drag-over {
+  outline: 2px solid rgba(54, 114, 96, 0.42);
+  background: var(--green-soft);
 }
 
 .tree-line.active {
@@ -959,6 +968,19 @@ button.breadcrumb-task:hover {
   white-space: nowrap;
 }
 
+.drag-handle {
+  color: var(--line-strong);
+  cursor: grab;
+  font-size: 0.78rem;
+  line-height: 1;
+  text-align: center;
+  user-select: none;
+}
+
+.tree-line:active .drag-handle {
+  cursor: grabbing;
+}
+
 .tree-toggle {
   display: grid;
   width: 24px;
@@ -967,6 +989,24 @@ button.breadcrumb-task:hover {
   border-radius: 5px;
   background: transparent;
   color: var(--muted);
+}
+
+.tree-root-drop {
+  display: grid;
+  min-height: 38px;
+  margin: 8px 2px 2px;
+  place-items: center;
+  border: 1px dashed var(--line-strong);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.tree-root-drop.drag-over {
+  border-color: rgba(54, 114, 96, 0.6);
+  background: var(--green-soft);
+  color: var(--green);
 }
 
 .task-canvas {

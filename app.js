@@ -59,6 +59,7 @@ let toastTimer = null;
 let timerInterval = null;
 let boardOrigin = "boards";
 let taskNoteDraftImages = {};
+let draggedTaskId = null;
 
 const primaryRouteMeta = {
   home: { label: "首页", title: "首页" },
@@ -1636,12 +1637,13 @@ function renderTaskBoard(route) {
             </div>
             <button class="icon-button" type="button" data-action="toggle-sidebar" title="${state.ui.sidebarCollapsed ? "展开任务树" : "折叠任务树"}" aria-label="${state.ui.sidebarCollapsed ? "展开任务树" : "折叠任务树"}">${state.ui.sidebarCollapsed ? "→" : "←"}</button>
           </header>
-          <nav class="tree-nav">
+          <nav class="tree-nav" data-tree-root="${project.id}">
             ${
               project.topLevelTaskIds.length
                 ? project.topLevelTaskIds.map((taskId) => renderTreeLine(taskId, 0, selectedTask?.id)).join("")
                 : `<div class="empty-state">还没有任务。</div>`
             }
+            <div class="tree-root-drop" data-tree-root-drop="${project.id}">拖到这里成为一级任务</div>
           </nav>
         </aside>
 
@@ -1692,12 +1694,13 @@ function renderTreeLine(taskId, depth, selectedTaskId) {
   const expanded = state.ui.expandedTaskIds.includes(task.id) && !completedCollapsed;
   return `
     <div>
-      <div class="tree-line ${task.id === selectedTaskId ? "active" : ""} ${project?.currentTaskId === task.id ? "flagged" : ""} ${task.status === "completed" ? "completed" : ""}" style="--depth:${depth}">
+      <div class="tree-line ${task.id === selectedTaskId ? "active" : ""} ${project?.currentTaskId === task.id ? "flagged" : ""} ${task.status === "completed" ? "completed" : ""}" style="--depth:${depth}" draggable="true" data-tree-task-id="${task.id}">
         ${
           hasChildren
             ? `<button class="tree-toggle" type="button" data-action="${task.status === "completed" ? "toggle-completed" : "toggle-tree"}" data-id="${task.id}" aria-label="${expanded ? "折叠" : "展开"}">${expanded ? "−" : "+"}</button>`
             : `<span></span>`
         }
+        <span class="drag-handle" aria-hidden="true">⋮⋮</span>
         <button class="tree-label" type="button" data-action="select-task" data-id="${task.id}">${escapeHtml(task.title)}</button>
         ${project?.currentTaskId === task.id ? `<span class="tag flagged">旗</span>` : ""}
       </div>
@@ -2218,6 +2221,56 @@ function toggleCurrentTask(taskId) {
   render();
 }
 
+function canMoveTask(taskId, newParentId) {
+  const task = getTask(taskId);
+  if (!task) return false;
+  if (!newParentId) return true;
+  const parent = getTask(newParentId);
+  if (!parent || parent.projectId !== task.projectId) return false;
+  if (parent.id === task.id) return false;
+  return !getSubtreeIds(task.id).includes(parent.id);
+}
+
+function removeTaskFromCurrentParent(task) {
+  const project = getProject(task.projectId);
+  if (task.parentId) {
+    const parent = getTask(task.parentId);
+    if (parent) parent.childIds = parent.childIds.filter((id) => id !== task.id);
+  } else if (project) {
+    project.topLevelTaskIds = project.topLevelTaskIds.filter((id) => id !== task.id);
+  }
+}
+
+function moveTask(taskId, newParentId = null) {
+  const task = getTask(taskId);
+  const project = getProject(task?.projectId);
+  if (!task || !project) return false;
+  const normalizedParentId = newParentId || null;
+  if (task.parentId === normalizedParentId) return false;
+  if (!canMoveTask(taskId, normalizedParentId)) {
+    showToast("不能拖到自己或自己的子任务下面。");
+    return false;
+  }
+
+  removeTaskFromCurrentParent(task);
+  task.parentId = normalizedParentId;
+  task.updatedAt = nowIso();
+  if (normalizedParentId) {
+    const parent = getTask(normalizedParentId);
+    parent.childIds = unique([...(parent.childIds || []), task.id]);
+    parent.updatedAt = nowIso();
+    if (!state.ui.expandedTaskIds.includes(parent.id)) state.ui.expandedTaskIds.push(parent.id);
+  } else {
+    project.topLevelTaskIds = unique([...project.topLevelTaskIds, task.id]);
+  }
+  state.ui.selectedTaskByProject[project.id] = task.id;
+  state.histories.push(makeHistory(task.id, project.id, "updated", { field: "parentId", parentId: normalizedParentId }));
+  touchProject(project.id);
+  saveState();
+  render();
+  return true;
+}
+
 function requestCompleteTask(taskId) {
   const task = getTask(taskId);
   if (!task || task.status === "completed") return;
@@ -2423,6 +2476,13 @@ function openTaskSettingsForm(taskId) {
     eyebrow: task.title,
     context: { taskId },
     body: `
+      <section class="settings-section">
+        <div>
+          <p class="eyebrow">Basic</p>
+          <h3>任务名称</h3>
+        </div>
+        <div class="field"><label>任务名称</label><input name="title" value="${escapeHtml(task.title)}" required /></div>
+      </section>
       <section class="settings-section">
         <div>
           <p class="eyebrow">Schedule</p>
@@ -2645,8 +2705,15 @@ function handleFormSubmit(event) {
   if (activeForm.kind === "task-meta") {
     const task = getTask(activeForm.taskId);
     if (!task) return;
+    const title = String(data.get("title") || "").trim();
+    if (!title) {
+      showToast("任务名称不能为空。");
+      return;
+    }
     const schedule = getScheduleFromForm(data);
     if (!validateSchedule(schedule)) return;
+    const titleChanged = title !== task.title;
+    task.title = title;
     task.valueLevel = data.get("valueLevel");
     task.urgency = data.get("urgency");
     task.valueTags = String(data.get("valueTags") || "").split(/\s+/).filter(Boolean);
@@ -2654,6 +2721,7 @@ function handleFormSubmit(event) {
     Object.assign(task, schedule);
     syncTaskWithPlannedDate(task);
     task.updatedAt = nowIso();
+    if (titleChanged) state.histories.push(makeHistory(task.id, task.projectId, "updated", { field: "title" }));
     touchProject(task.projectId);
     closeForm();
     render();
@@ -3214,6 +3282,62 @@ function moveDailyTask(taskId, direction) {
   render();
 }
 
+function clearTreeDropTargets() {
+  document.querySelectorAll(".tree-line.drag-over, .tree-root-drop.drag-over").forEach((element) => {
+    element.classList.remove("drag-over");
+  });
+}
+
+function getValidTreeDropTarget(event) {
+  if (!draggedTaskId) return null;
+  const draggedTask = getTask(draggedTaskId);
+  const targetLine = event.target.closest?.("[data-tree-task-id]");
+  if (targetLine) {
+    const parentId = targetLine.dataset.treeTaskId;
+    return canMoveTask(draggedTaskId, parentId) ? { element: targetLine, parentId } : null;
+  }
+  const rootDrop = event.target.closest?.("[data-tree-root-drop]");
+  if (rootDrop && draggedTask?.projectId === rootDrop.dataset.treeRootDrop && canMoveTask(draggedTaskId, null)) {
+    return { element: rootDrop, parentId: null };
+  }
+  return null;
+}
+
+function handleDragStart(event) {
+  const line = event.target.closest?.("[data-tree-task-id]");
+  if (!line) return;
+  draggedTaskId = line.dataset.treeTaskId;
+  line.classList.add("dragging");
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", draggedTaskId);
+  }
+}
+
+function handleDragOver(event) {
+  const target = getValidTreeDropTarget(event);
+  clearTreeDropTargets();
+  if (!target) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  target.element.classList.add("drag-over");
+}
+
+function handleDrop(event) {
+  const target = getValidTreeDropTarget(event);
+  clearTreeDropTargets();
+  if (!target || !draggedTaskId) return;
+  event.preventDefault();
+  moveTask(draggedTaskId, target.parentId);
+  draggedTaskId = null;
+}
+
+function handleDragEnd() {
+  draggedTaskId = null;
+  document.querySelectorAll(".tree-line.dragging").forEach((element) => element.classList.remove("dragging"));
+  clearTreeDropTargets();
+}
+
 async function handleAction(action, trigger) {
   const id = trigger.dataset.id;
   if (action === "go-back") goBack();
@@ -3527,6 +3651,10 @@ document.addEventListener("keydown", (event) => {
 
 document.addEventListener("change", handleChange);
 document.addEventListener("input", handleInput);
+document.addEventListener("dragstart", handleDragStart);
+document.addEventListener("dragover", handleDragOver);
+document.addEventListener("drop", handleDrop);
+document.addEventListener("dragend", handleDragEnd);
 els.recordForm.addEventListener("submit", handleFormSubmit);
 els.formModal.addEventListener("click", (event) => {
   if (event.target === els.formModal) closeForm();
