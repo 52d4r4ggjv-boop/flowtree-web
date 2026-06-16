@@ -1396,6 +1396,10 @@ button.breadcrumb-task:hover {
   white-space: nowrap;
 }
 
+.deleted-context {
+  color: var(--muted);
+}
+
 .note-images a {
   aspect-ratio: 4 / 3;
   overflow: hidden;
@@ -1664,6 +1668,9 @@ button.breadcrumb-task:hover {
   right: 24px;
   bottom: 82px;
   z-index: 80;
+  display: flex;
+  gap: 12px;
+  align-items: center;
   max-width: 360px;
   padding: 11px 14px;
   border: 1px solid rgba(54, 114, 96, 0.32);
@@ -1673,6 +1680,44 @@ button.breadcrumb-task:hover {
   box-shadow: var(--shadow);
   font-size: 0.84rem;
   font-weight: 750;
+}
+
+.toast button {
+  border: 0;
+  background: transparent;
+  color: var(--green);
+  font-weight: 850;
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 90;
+  display: grid;
+  min-width: 170px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.context-menu button {
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-weight: 750;
+  text-align: left;
+}
+
+.context-menu button:hover {
+  background: var(--surface-muted);
+}
+
+.context-menu button.danger {
+  color: var(--rose);
 }
 
 .auth-gate {

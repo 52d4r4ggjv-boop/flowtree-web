@@ -60,6 +60,7 @@ let timerInterval = null;
 let boardOrigin = "boards";
 let taskNoteDraftImages = {};
 let draggedTaskId = null;
+let lastDeletedStateSnapshot = null;
 
 const primaryRouteMeta = {
   home: { label: "首页", title: "首页" },
@@ -88,6 +89,7 @@ const els = {
   formBody: document.querySelector("#formBody"),
   formActions: document.querySelector("#formActions"),
   toast: document.querySelector("#toast"),
+  taskContextMenu: document.querySelector("#taskContextMenu"),
   authGate: document.querySelector("#authGate"),
   authTitle: document.querySelector("#authTitle"),
   authForm: document.querySelector("#authForm"),
@@ -1342,6 +1344,9 @@ function renderNoteItems(notes) {
 function renderNoteContext(note) {
   const task = getTask(note.taskId);
   const project = getProject(note.projectId || task?.projectId);
+  if (!task && note.deletedTaskTitle) {
+    return `<span class="note-context-link deleted-context">已删除任务 / ${escapeHtml(note.deletedTaskTitle)}</span>`;
+  }
   if (!task) return "";
   return `<button class="note-context-link" type="button" data-action="open-note-task" data-id="${task.id}">${escapeHtml(project?.name || "任务")} / ${escapeHtml(task.title)}</button>`;
 }
@@ -1730,6 +1735,7 @@ function renderSelectedTask(project, task) {
       <div class="page-actions">
         <button class="secondary-button flag-button ${flagged ? "active" : ""}" type="button" data-action="toggle-current-task" data-id="${task.id}">${flagged ? "⚑ 当前任务" : "⚐ 设为当前任务"}</button>
         <button class="secondary-button" type="button" data-action="edit-task-settings" data-id="${task.id}">任务设置</button>
+        <button class="danger-button" type="button" data-action="request-delete-task" data-id="${task.id}">删除任务</button>
       </div>
     </header>
 
@@ -2269,6 +2275,89 @@ function moveTask(taskId, newParentId = null) {
   saveState();
   render();
   return true;
+}
+
+function requestDeleteTask(taskId) {
+  const task = getTask(taskId);
+  if (!task) return;
+  const descendantCount = Math.max(0, getSubtreeIds(taskId).length - 1);
+  openChoiceDialog({
+    title: "删除任务",
+    eyebrow: task.title,
+    choices: [
+      {
+        action: "confirm-delete-task",
+        id: task.id,
+        title: "确认删除",
+        description: descendantCount
+          ? `将删除它下面的 ${descendantCount} 个子任务。相关记录会保留在记事本，并标记为 #已删除任务。`
+          : "相关记录会保留在记事本，并标记为 #已删除任务。",
+      },
+    ],
+  });
+}
+
+function markNotesForDeletedTasks(taskIds, deletedTasks) {
+  state.notes.forEach((note) => {
+    if (!taskIds.includes(note.taskId)) return;
+    const task = deletedTasks[note.taskId];
+    note.deletedTaskTitle = task?.title || "已删除任务";
+    note.deletedProjectName = getProject(task?.projectId)?.name || "";
+    note.taskId = null;
+    note.tags = unique([...(note.tags || []), "已删除任务"]);
+    note.updatedAt = nowIso();
+  });
+}
+
+function deleteTaskBranch(taskId) {
+  const task = getTask(taskId);
+  const project = getProject(task?.projectId);
+  if (!task || !project) return;
+
+  lastDeletedStateSnapshot = JSON.parse(JSON.stringify(state));
+  const taskIds = getSubtreeIds(taskId);
+  const deletedTasks = Object.fromEntries(taskIds.map((id) => [id, getTask(id)]).filter(([, value]) => value));
+  const route = getRoute();
+
+  markNotesForDeletedTasks(taskIds, deletedTasks);
+  Object.values(state.tasks).forEach((entry) => {
+    entry.childIds = (entry.childIds || []).filter((id) => !taskIds.includes(id));
+  });
+  project.topLevelTaskIds = project.topLevelTaskIds.filter((id) => !taskIds.includes(id));
+  if (taskIds.includes(project.currentTaskId)) project.currentTaskId = null;
+  taskIds.forEach((id) => delete state.tasks[id]);
+
+  state.dailyBoard.todayTaskIds = state.dailyBoard.todayTaskIds.filter((id) => !taskIds.includes(id));
+  state.dailyBoard.completedTaskIds = state.dailyBoard.completedTaskIds.filter((id) => !taskIds.includes(id));
+  state.dailyBoard.pinnedTaskIds = state.dailyBoard.pinnedTaskIds.filter((id) => !taskIds.includes(id));
+  state.ui.expandedTaskIds = state.ui.expandedTaskIds.filter((id) => !taskIds.includes(id));
+  state.ui.expandedCompletedTaskIds = state.ui.expandedCompletedTaskIds.filter((id) => !taskIds.includes(id));
+  if (state.timer.taskId && taskIds.includes(state.timer.taskId)) state.timer = makeTimerState();
+  state.pendingAIItems.forEach((item) => {
+    if (taskIds.includes(item.matchedTaskId)) item.matchedTaskId = "";
+  });
+
+  const fallback = getDefaultTask(project);
+  state.ui.selectedTaskByProject[project.id] = fallback?.id || "";
+  touchProject(project.id);
+  closeForm();
+  saveState();
+
+  if (route.name === "board" && route.projectId === project.id && taskIds.includes(route.taskId)) {
+    navigate(`board/${project.id}${fallback ? `/${fallback.id}` : ""}`);
+  } else {
+    render();
+  }
+  showToast("已删除任务。", "撤销", "undo-delete-task");
+}
+
+function undoDeleteTask() {
+  if (!lastDeletedStateSnapshot) return;
+  state = normalizeV2(lastDeletedStateSnapshot);
+  lastDeletedStateSnapshot = null;
+  saveState();
+  render();
+  showToast("已撤销删除。");
 }
 
 function requestCompleteTask(taskId) {
@@ -3266,9 +3355,12 @@ function formatDateTime(value) {
   });
 }
 
-function showToast(message) {
+function showToast(message, actionLabel = "", action = "") {
   clearTimeout(toastTimer);
-  els.toast.textContent = message;
+  els.toast.innerHTML = `
+    <span>${escapeHtml(message)}</span>
+    ${actionLabel && action ? `<button type="button" data-action="${escapeHtml(action)}">${escapeHtml(actionLabel)}</button>` : ""}
+  `;
   els.toast.classList.remove("hidden");
   toastTimer = setTimeout(() => els.toast.classList.add("hidden"), 2600);
 }
@@ -3336,6 +3428,31 @@ function handleDragEnd() {
   draggedTaskId = null;
   document.querySelectorAll(".tree-line.dragging").forEach((element) => element.classList.remove("dragging"));
   clearTreeDropTargets();
+}
+
+function openTaskContextMenu(taskId, x, y) {
+  const task = getTask(taskId);
+  if (!task || !els.taskContextMenu) return;
+  els.taskContextMenu.innerHTML = `
+    <button type="button" data-action="select-task" data-id="${task.id}" role="menuitem">打开</button>
+    <button type="button" data-action="add-task" data-project-id="${task.projectId}" data-parent-id="${task.id}" role="menuitem">添加子任务</button>
+    <button type="button" data-action="edit-task-settings" data-id="${task.id}" role="menuitem">任务设置</button>
+    <button class="danger" type="button" data-action="request-delete-task" data-id="${task.id}" role="menuitem">删除任务</button>
+  `;
+  els.taskContextMenu.style.left = `${Math.min(x, window.innerWidth - 190)}px`;
+  els.taskContextMenu.style.top = `${Math.min(y, window.innerHeight - 190)}px`;
+  els.taskContextMenu.classList.remove("hidden");
+}
+
+function closeTaskContextMenu() {
+  els.taskContextMenu?.classList.add("hidden");
+}
+
+function handleContextMenu(event) {
+  const line = event.target.closest?.("[data-tree-task-id]");
+  if (!line) return;
+  event.preventDefault();
+  openTaskContextMenu(line.dataset.treeTaskId, event.clientX, event.clientY);
 }
 
 async function handleAction(action, trigger) {
@@ -3413,6 +3530,9 @@ async function handleAction(action, trigger) {
   if (action === "record-stuck") openStuckForm(id);
   if (action === "record-retro") openRetroForm(id);
   if (action === "edit-task-settings") openTaskSettingsForm(id);
+  if (action === "request-delete-task") requestDeleteTask(id);
+  if (action === "confirm-delete-task") deleteTaskBranch(id);
+  if (action === "undo-delete-task") undoDeleteTask();
   if (action === "set-date-preset") {
     const field = document.querySelector(`[name="${trigger.dataset.field}"]`);
     if (field) {
@@ -3632,11 +3752,17 @@ function escapeRegExp(value) {
 
 document.addEventListener("click", (event) => {
   const trigger = event.target.closest("[data-action]");
-  if (!trigger) return;
+  if (!trigger) {
+    closeTaskContextMenu();
+    return;
+  }
+  const fromContextMenu = Boolean(trigger.closest("#taskContextMenu"));
   event.preventDefault();
   handleAction(trigger.dataset.action, trigger).catch((error) => {
     console.warn("FlowTree action failed", error);
     showToast("操作失败，请稍后重试。");
+  }).finally(() => {
+    if (fromContextMenu) closeTaskContextMenu();
   });
 });
 
@@ -3655,6 +3781,7 @@ document.addEventListener("dragstart", handleDragStart);
 document.addEventListener("dragover", handleDragOver);
 document.addEventListener("drop", handleDrop);
 document.addEventListener("dragend", handleDragEnd);
+document.addEventListener("contextmenu", handleContextMenu);
 els.recordForm.addEventListener("submit", handleFormSubmit);
 els.formModal.addEventListener("click", (event) => {
   if (event.target === els.formModal) closeForm();
@@ -3666,6 +3793,8 @@ els.authForm?.addEventListener("submit", (event) => {
 });
 window.addEventListener("hashchange", render);
 window.addEventListener("focus", refreshCloudState);
+window.addEventListener("scroll", closeTaskContextMenu, true);
+window.addEventListener("resize", closeTaskContextMenu);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") refreshCloudState();
 });
