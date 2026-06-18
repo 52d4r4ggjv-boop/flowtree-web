@@ -108,7 +108,12 @@
           </label>
           <label>
             密码（登录密码）
-            <input id="authPassword" name="password" type="password" autocomplete="current-password" minlength="6" required />
+            <span class="password-input">
+              <input id="authPassword" name="password" type="password" autocomplete="current-password" minlength="6" required />
+              <button class="password-toggle" id="authPasswordToggle" type="button" data-action="toggle-auth-password" aria-label="显示密码" aria-pressed="false">
+                <span class="password-eye-icon" aria-hidden="true"></span>
+              </button>
+            </span>
           </label>
           <p class="auth-message" id="authMessage" aria-live="polite"></p>
           <button class="primary-button" id="authSubmitButton" type="submit">登录</button>

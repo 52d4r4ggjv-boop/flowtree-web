@@ -1768,6 +1768,67 @@ button.breadcrumb-task:hover {
   font-weight: 750;
 }
 
+.password-input {
+  position: relative;
+  display: block;
+}
+
+.password-input input {
+  padding-right: 46px;
+}
+
+.password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  transform: translateY(-50%);
+}
+
+.password-toggle:hover {
+  background: var(--surface-muted);
+  color: var(--ink);
+  transform: translateY(-50%);
+}
+
+.password-eye-icon {
+  position: relative;
+  width: 18px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-radius: 999px / 720px;
+}
+
+.password-eye-icon::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+  transform: translate(-50%, -50%);
+}
+
+.password-toggle.active .password-eye-icon::before {
+  position: absolute;
+  top: 4px;
+  left: -4px;
+  width: 22px;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
+  content: "";
+  transform: rotate(-35deg);
+}
+
 .auth-message {
   min-height: 20px;
   color: var(--rose);

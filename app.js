@@ -2,6 +2,7 @@ const STORAGE_KEY_V2 = "flowtree_state_v2";
 const STORAGE_KEY_V1 = "flowtree_state_v1";
 const LEGACY_CLAIMED_KEY = "flowtree_legacy_claimed_v1";
 const LAST_CLOUD_USER_KEY = "flowtree_last_cloud_user_v1";
+const PASSWORD_RESET_REQUEST_KEY = "flowtree_password_reset_request_v1";
 const TODAY = new Date().toISOString().slice(0, 10);
 
 const urgencyLabels = {
@@ -100,6 +101,7 @@ const els = {
   authEmailField: document.querySelector("#authEmailField"),
   authEmail: document.querySelector("#authEmail"),
   authPassword: document.querySelector("#authPassword"),
+  authPasswordToggle: document.querySelector("#authPasswordToggle"),
   authMessage: document.querySelector("#authMessage"),
   authSubmitButton: document.querySelector("#authSubmitButton"),
   authSecondaryActions: document.querySelector("#authSecondaryActions"),
@@ -608,6 +610,9 @@ function getSignedOutPrompt() {
 function getAuthErrorMessage(error, mode = "signin") {
   const message = String(error?.message || "");
   if (/invalid login credentials/i.test(message)) {
+    if (getRecentPasswordResetRequest()) {
+      return "邮箱或密码不正确。如果你刚点过重置邮件，请确认已经在“设置新登录密码”页面点了“保存新密码”。只在登录页输入新密码不会完成重置。";
+    }
     return "邮箱或密码不正确。也可能是邮箱还没确认：请先打开邮箱确认链接；如果不确定密码，请点“设置/重置密码”。";
   }
   if (/email not confirmed/i.test(message)) {
@@ -633,6 +638,50 @@ function isExistingSignupResult(result) {
   return Array.isArray(identities) && identities.length === 0;
 }
 
+function rememberPasswordResetRequest(email) {
+  localStorage.setItem(
+    PASSWORD_RESET_REQUEST_KEY,
+    JSON.stringify({
+      email,
+      requestedAt: Date.now(),
+    })
+  );
+}
+
+function getRecentPasswordResetRequest() {
+  try {
+    const request = JSON.parse(localStorage.getItem(PASSWORD_RESET_REQUEST_KEY) || "null");
+    if (!request?.requestedAt) return null;
+    if (Date.now() - request.requestedAt > 30 * 60 * 1000) {
+      localStorage.removeItem(PASSWORD_RESET_REQUEST_KEY);
+      return null;
+    }
+    return request;
+  } catch {
+    return null;
+  }
+}
+
+function clearPasswordResetRequest() {
+  localStorage.removeItem(PASSWORD_RESET_REQUEST_KEY);
+}
+
+function getPasswordRecoveryRedirectUrl() {
+  return `${location.origin}${location.pathname}?flowtree_auth=recovery`;
+}
+
+function hasPasswordRecoveryInUrl() {
+  const search = location.search || "";
+  const hash = location.hash || "";
+  return (
+    search.includes("flowtree_auth=recovery") ||
+    search.includes("type=recovery") ||
+    hash.includes("type=recovery") ||
+    hash.includes("type=password_recovery") ||
+    (hasAuthCallbackInUrl() && Boolean(getRecentPasswordResetRequest()))
+  );
+}
+
 function showAuthGate(message = "", tone = message ? "info" : "") {
   els.authGate?.classList.remove("hidden");
   document.body.classList.add("auth-locked");
@@ -650,13 +699,15 @@ function showPasswordRecovery() {
   authRecoveryMode = true;
   showAuthGate();
   if (els.authTitle) els.authTitle.textContent = "设置新登录密码";
-  if (els.authCopy) els.authCopy.textContent = "这里不是找回旧密码，而是设置一个你自己知道的新密码。保存后，以后登录就用这个新密码。";
+  if (els.authCopy) els.authCopy.textContent = "这里不是找回旧密码。请在这里输入一个新密码并点击保存，保存后以后登录就用它。";
   els.authEmailField?.classList.add("hidden");
   els.authSecondaryActions?.classList.add("hidden");
   if (els.authPassword) {
     els.authPassword.value = "";
     els.authPassword.autocomplete = "new-password";
+    els.authPassword.type = "password";
   }
+  updatePasswordToggle(false);
   if (els.authSubmitButton) els.authSubmitButton.textContent = "保存新密码";
   setAuthMessage("请输入至少 6 位的新密码，然后点击保存。", "info");
 }
@@ -668,8 +719,27 @@ function resetAuthFormMode() {
   if (els.authCopy) els.authCopy.textContent = "你的任务、记录和时间计划会加密传输，并只对当前账户开放。登录状态会自动保留。";
   els.authEmailField?.classList.remove("hidden");
   els.authSecondaryActions?.classList.remove("hidden");
-  if (els.authPassword) els.authPassword.autocomplete = "current-password";
+  if (els.authPassword) {
+    els.authPassword.autocomplete = "current-password";
+    els.authPassword.type = "password";
+  }
+  updatePasswordToggle(false);
   if (els.authSubmitButton) els.authSubmitButton.textContent = "登录";
+}
+
+function updatePasswordToggle(isVisible = els.authPassword?.type === "text") {
+  if (!els.authPasswordToggle) return;
+  els.authPasswordToggle.setAttribute("aria-pressed", String(isVisible));
+  els.authPasswordToggle.setAttribute("aria-label", isVisible ? "隐藏密码" : "显示密码");
+  els.authPasswordToggle.classList.toggle("active", isVisible);
+}
+
+function toggleAuthPasswordVisibility() {
+  if (!els.authPassword) return;
+  const shouldShow = els.authPassword.type === "password";
+  els.authPassword.type = shouldShow ? "text" : "password";
+  updatePasswordToggle(shouldShow);
+  els.authPassword.focus();
 }
 
 function rememberCloudUser(user) {
@@ -708,7 +778,7 @@ function cleanAuthCallbackUrl() {
   window.history?.replaceState?.(null, "", `${location.origin}${location.pathname}#/home`);
 }
 
-function showSignedOutGate(message = getSignedOutPrompt()) {
+function showSignedOutGate(message = getSignedOutPrompt(), tone = "info") {
   clearTimeout(authFallbackTimer);
   cloudUser = null;
   cloudReady = false;
@@ -718,10 +788,10 @@ function showSignedOutGate(message = getSignedOutPrompt()) {
   if (els.appView) els.appView.innerHTML = "";
   closeActivityDrawer();
   closeNotesDrawer();
-  showAuthGate(message, "info");
+  showAuthGate(message, tone);
 }
 
-function scheduleSignedOutGate(message = getSignedOutPrompt()) {
+function scheduleSignedOutGate(message = getSignedOutPrompt(), delayMs = 2200, tone = "info") {
   clearTimeout(authFallbackTimer);
   authFallbackTimer = setTimeout(async () => {
     if (cloudUser || authRecoveryMode) return;
@@ -734,8 +804,8 @@ function scheduleSignedOutGate(message = getSignedOutPrompt()) {
     } catch (error) {
       console.warn("FlowTree auth retry failed", error);
     }
-    showSignedOutGate(message);
-  }, 2200);
+    showSignedOutGate(message, tone);
+  }, delayMs);
 }
 
 function updateAccountUI() {
@@ -846,11 +916,19 @@ async function initializeCloud() {
     return;
   }
   try {
+    const recoveryLinkOpen = hasPasswordRecoveryInUrl();
     cloudClient = window.FlowTreeCloud.getClient();
     const lastUser = getLastCloudUser();
-    showAuthGate(lastUser?.email ? `正在恢复 ${lastUser.email} 的登录状态...` : "正在检查登录状态...", "info");
+    showAuthGate(
+      recoveryLinkOpen
+        ? "正在打开密码设置页面..."
+        : lastUser?.email
+          ? `正在恢复 ${lastUser.email} 的登录状态...`
+          : "正在检查登录状态...",
+      "info"
+    );
     cloudClient.auth.onAuthStateChange((event, session) => {
-      if (event === "PASSWORD_RECOVERY") {
+      if (event === "PASSWORD_RECOVERY" || (session && hasPasswordRecoveryInUrl())) {
         authRecoverySession = session;
         setTimeout(showPasswordRecovery, 0);
         return;
@@ -865,13 +943,27 @@ async function initializeCloud() {
         return;
       }
       if (event === "INITIAL_SESSION") {
-        setTimeout(() => scheduleSignedOutGate(), 0);
+        setTimeout(() => {
+          if (hasPasswordRecoveryInUrl()) {
+            scheduleSignedOutGate("密码设置链接没有成功打开。请重新发送设置/重置密码邮件，并确认 Supabase Redirect URL 包含线上地址。", 5200, "error");
+            return;
+          }
+          scheduleSignedOutGate();
+        }, 0);
       }
     });
     const { data, error } = await cloudClient.auth.getSession();
     if (error) throw error;
-    if (data.session) await handleCloudSession(data.session);
-    else scheduleSignedOutGate();
+    if (data.session && hasPasswordRecoveryInUrl()) {
+      authRecoverySession = data.session;
+      showPasswordRecovery();
+    } else if (data.session) {
+      await handleCloudSession(data.session);
+    } else if (hasPasswordRecoveryInUrl()) {
+      scheduleSignedOutGate("密码设置链接没有成功打开。请重新发送设置/重置密码邮件，并确认 Supabase Redirect URL 包含线上地址。", 5200, "error");
+    } else {
+      scheduleSignedOutGate();
+    }
   } catch (error) {
     console.warn("FlowTree cloud could not initialize", error);
     setSyncStatus("云端未连接", "error");
@@ -930,9 +1022,10 @@ async function requestPasswordReset() {
   authRequestInFlight = true;
   setAuthMessage("正在发送设置/重置密码邮件...", "info");
   try {
-    const redirectTo = `${location.origin}${location.pathname}`;
+    const redirectTo = getPasswordRecoveryRedirectUrl();
     const { error } = await cloudClient.auth.resetPasswordForEmail(email, { redirectTo });
     if (error) throw error;
+    rememberPasswordResetRequest(email);
     setAuthMessage("邮件已发送。打开邮件链接后，页面会让你设置一个新的登录密码。若没收到，请检查垃圾箱或先完成注册确认。", "success");
   } catch (error) {
     console.warn("Password reset request failed", error);
@@ -954,11 +1047,13 @@ async function updateRecoveredPassword() {
   try {
     const { error } = await cloudClient.auth.updateUser({ password });
     if (error) throw error;
-    const recoveredSession = authRecoverySession;
+    const { data } = await cloudClient.auth.getSession();
+    const recoveredSession = data?.session || authRecoverySession;
+    clearPasswordResetRequest();
     resetAuthFormMode();
-    if (recoveredSession) await handleCloudSession(recoveredSession);
-    else hideAuthGate();
     cleanAuthCallbackUrl();
+    if (recoveredSession) await handleCloudSession(recoveredSession);
+    else showSignedOutGate("新密码已保存。请用新密码登录。");
     showToast("新密码已保存。以后请用它登录。");
   } catch (error) {
     console.warn("Password update failed", error);
@@ -3807,6 +3902,7 @@ async function handleAction(action, trigger) {
   }
   if (action === "sign-up") await submitAuth("signup");
   if (action === "request-password-reset") await requestPasswordReset();
+  if (action === "toggle-auth-password") toggleAuthPasswordVisibility();
   if (action === "sign-out") await signOut();
 }
 
