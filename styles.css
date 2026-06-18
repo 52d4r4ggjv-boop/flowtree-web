@@ -1186,8 +1186,56 @@ button.breadcrumb-task:hover {
   border: 1px solid var(--line);
 }
 
-.rich-check-item {
+.rich-check-list {
+  display: grid;
+  gap: 7px;
+  padding-left: 0 !important;
   list-style: none;
+}
+
+.rich-check-item {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  min-height: 24px;
+  list-style: none;
+}
+
+.rich-check-box {
+  position: relative;
+  flex: 0 0 19px;
+  width: 19px;
+  height: 19px;
+  margin-top: 4px;
+  border: 2px solid color-mix(in srgb, var(--muted) 42%, white);
+  border-radius: 999px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.rich-check-box:hover {
+  border-color: var(--gold);
+}
+
+.rich-check-item[data-checked="true"] .rich-check-box {
+  border-color: #f5b32a;
+  background: #f5b32a;
+}
+
+.rich-check-item[data-checked="true"] .rich-check-box::after {
+  position: absolute;
+  left: 5px;
+  top: 1px;
+  width: 5px;
+  height: 10px;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  content: "";
+  transform: rotate(45deg);
+}
+
+.rich-check-text {
+  min-width: 1em;
 }
 
 .rich-highlight {

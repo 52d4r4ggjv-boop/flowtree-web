@@ -129,13 +129,14 @@ function sanitizeRichHtml(html) {
   const template = document.createElement("template");
   template.innerHTML = String(html || "");
   const allowed = new Set(["B", "STRONG", "I", "EM", "U", "S", "STRIKE", "P", "DIV", "BR", "UL", "OL", "LI", "BLOCKQUOTE", "PRE", "CODE", "H2", "H3", "H4", "SPAN", "FONT", "TABLE", "TBODY", "TR", "TD", "TH"]);
-  const allowedClasses = new Set(["rich-highlight", "rich-check-item"]);
+  const allowedClasses = new Set(["rich-highlight", "rich-check-list", "rich-check-item", "rich-check-box", "rich-check-text"]);
 
   template.content.querySelectorAll("*").forEach((node) => {
     if (!allowed.has(node.tagName)) {
       node.replaceWith(...node.childNodes);
       return;
     }
+    const checkedValue = node.getAttribute("data-checked") === "true" ? "true" : "false";
     if (node.style?.backgroundColor || node.getAttribute("bgcolor")) node.classList.add("rich-highlight");
     [...node.attributes].forEach((attribute) => {
       if (attribute.name !== "class") node.removeAttribute(attribute.name);
@@ -147,6 +148,7 @@ function sanitizeRichHtml(html) {
         .join(" ");
       if (!node.className) node.removeAttribute("class");
     }
+    if (node.classList.contains("rich-check-item")) node.setAttribute("data-checked", checkedValue);
   });
 
   return template.innerHTML.trim();
@@ -1677,7 +1679,7 @@ function renderNoteItems(notes) {
   return notes
     .map(
       (note) => `
-        <article class="note-item">
+        <article class="note-item" data-note-id="${note.id}">
           <div class="note-item-meta">
             <time>${formatDateTime(note.updatedAt)}</time>
             ${renderNoteContext(note)}
@@ -2164,7 +2166,7 @@ function renderTaskNotebook(project, task) {
             <span class="toolbar-divider" aria-hidden="true"></span>
             <button class="rich-tool-button" type="button" data-action="rich-command" data-value="insertUnorderedList" title="项目符号列表" aria-label="项目符号列表">•</button>
             <button class="rich-tool-button" type="button" data-action="rich-command" data-value="insertOrderedList" title="编号列表" aria-label="编号列表">1.</button>
-            <button class="rich-tool-button" type="button" data-action="rich-command" data-value="checklist" title="待办项" aria-label="待办项">☐</button>
+            <button class="rich-tool-button" type="button" data-action="rich-command" data-value="checklist" title="待办项" aria-label="待办项">✓</button>
             <button class="rich-tool-button" type="button" data-action="rich-command" data-value="table" title="表格" aria-label="表格">▦</button>
             <button class="rich-tool-button" type="button" data-action="rich-command" data-value="blockquote" title="引用" aria-label="引用">❝</button>
             <button class="rich-tool-button" type="button" data-action="rich-command" data-value="code" title="等宽" aria-label="等宽">⌘</button>
@@ -2198,7 +2200,7 @@ function renderTaskNotebook(project, task) {
             ? notes
                 .map(
                   (note) => `
-                    <article class="task-note-item">
+                    <article class="task-note-item" data-note-id="${note.id}">
                       <time>${formatDateTime(note.updatedAt)}</time>
                       ${renderNoteContent(note)}
                       ${renderNoteImages(note.images)}
@@ -3462,7 +3464,7 @@ function applyRichCommand(command) {
     return;
   }
   if (command === "checklist") {
-    insertHtmlAtSelection('<ul><li class="rich-check-item">☐ </li></ul>');
+    insertHtmlAtSelection('<ul class="rich-check-list"><li class="rich-check-item" data-checked="false"><span class="rich-check-box"></span><span class="rich-check-text">待办</span></li></ul><p></p>');
     return;
   }
   if (command === "table") {
@@ -3577,6 +3579,21 @@ async function addTaskNoteImages(taskId, files) {
   }
   taskNoteDraftImages[taskId] = [...existing, ...images];
   render();
+}
+
+function toggleRichCheckItem(checkBox) {
+  const item = checkBox.closest(".rich-check-item");
+  if (!item) return;
+  item.dataset.checked = item.dataset.checked === "true" ? "false" : "true";
+  const savedNoteElement = checkBox.closest("[data-note-id]");
+  if (!savedNoteElement || checkBox.closest("#taskNoteEditor")) return;
+  const note = state.notes.find((entry) => entry.id === savedNoteElement.dataset.noteId);
+  const contentElement = savedNoteElement.querySelector(".rich-note-content");
+  if (!note || !contentElement) return;
+  note.contentHtml = sanitizeRichHtml(contentElement.innerHTML);
+  note.content = getPlainTextFromHtml(note.contentHtml);
+  note.updatedAt = nowIso();
+  saveState();
 }
 
 function compressImageFile(file) {
@@ -4191,6 +4208,12 @@ function escapeRegExp(value) {
 }
 
 document.addEventListener("click", (event) => {
+  const checkBox = event.target.closest(".rich-check-box");
+  if (checkBox) {
+    event.preventDefault();
+    toggleRichCheckItem(checkBox);
+    return;
+  }
   const trigger = event.target.closest("[data-action]");
   if (!trigger) {
     closeTaskContextMenu();
