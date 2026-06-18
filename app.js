@@ -212,9 +212,24 @@ function normalizeV2(saved) {
       todayTaskIds.push(task.id);
     }
   });
+  const projects = Array.isArray(saved.projects)
+    ? saved.projects.map((project) => {
+        const currentTaskIds = unique([...(project.currentTaskIds || []), project.currentTaskId].filter(Boolean)).filter((taskId) => {
+          const task = tasks[taskId];
+          return task && task.status !== "completed";
+        });
+        return {
+          ...project,
+          topLevelTaskIds: project.topLevelTaskIds || [],
+          currentTaskIds,
+          currentTaskId: currentTaskIds[0] || null,
+        };
+      })
+    : [];
+
   return {
     version: 2,
-    projects: Array.isArray(saved.projects) ? saved.projects : [],
+    projects,
     tasks,
     histories: Array.isArray(saved.histories) ? saved.histories : [],
     pendingAIItems: Array.isArray(saved.pendingAIItems) ? saved.pendingAIItems : [],
@@ -285,6 +300,7 @@ function migrateV1(old) {
       description: project.description || "",
       status: project.status || "active",
       topLevelTaskIds,
+      currentTaskIds: currentTaskId ? [currentTaskId] : [],
       currentTaskId,
       createdAt: project.createdAt || nowIso(),
       updatedAt: project.updatedAt || nowIso(),
@@ -386,8 +402,8 @@ function createInitialState() {
 
   add("project_couple_app", "task_couple_concept", "明确一个核心使用场景", null, [], "not_started", "no_deadline", "medium", ["探索价值"]);
 
-  getProjectFrom(projects, "project_thesis").currentTaskId = "task_thesis_direction";
-  getProjectFrom(projects, "project_yuanfudao").currentTaskId = "task_yuanfudao_metrics";
+  setProjectInitialCurrentTasks(projects, "project_thesis", ["task_thesis_direction"]);
+  setProjectInitialCurrentTasks(projects, "project_yuanfudao", ["task_yuanfudao_metrics"]);
 
   const histories = [
     makeHistory("task_yuanfudao_review", "project_yuanfudao", "created", { source: "语音输入" }, createdAt),
@@ -435,10 +451,18 @@ function makeProject(id, name, description, createdAt = nowIso()) {
     description,
     status: "active",
     topLevelTaskIds: [],
+    currentTaskIds: [],
     currentTaskId: null,
     createdAt,
     updatedAt: createdAt,
   };
+}
+
+function setProjectInitialCurrentTasks(projects, projectId, taskIds) {
+  const project = getProjectFrom(projects, projectId);
+  if (!project) return;
+  project.currentTaskIds = unique(taskIds);
+  project.currentTaskId = project.currentTaskIds[0] || null;
 }
 
 function makeTask({
@@ -1192,8 +1216,9 @@ function getTaskDepth(taskId) {
 }
 
 function getDefaultTask(project) {
-  if (project.currentTaskId && getTask(project.currentTaskId)?.status !== "completed") {
-    return getTask(project.currentTaskId);
+  const currentTask = getProjectCurrentTasks(project)[0];
+  if (currentTask) {
+    return currentTask;
   }
   const selected = getTask(state.ui.selectedTaskByProject[project.id]);
   if (selected) return selected;
@@ -1201,6 +1226,45 @@ function getDefaultTask(project) {
     .filter((task) => task.status !== "completed")
     .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
   return incomplete[0] || getTask(project.topLevelTaskIds[0]) || null;
+}
+
+function getProjectCurrentTaskIds(project) {
+  if (!project) return [];
+  return unique([...(project.currentTaskIds || []), project.currentTaskId].filter(Boolean)).filter((taskId) => {
+    const task = getTask(taskId);
+    return task?.projectId === project.id && task.status !== "completed";
+  });
+}
+
+function getProjectCurrentTasks(project) {
+  return getProjectCurrentTaskIds(project).map(getTask).filter(Boolean);
+}
+
+function setProjectCurrentTaskIds(project, taskIds) {
+  if (!project) return;
+  const currentTaskIds = unique(taskIds).filter((taskId) => {
+    const task = getTask(taskId);
+    return task?.projectId === project.id && task.status !== "completed";
+  });
+  project.currentTaskIds = currentTaskIds;
+  project.currentTaskId = currentTaskIds[0] || null;
+}
+
+function isProjectCurrentTask(project, taskId) {
+  return getProjectCurrentTaskIds(project).includes(taskId);
+}
+
+function addProjectCurrentTask(project, taskId) {
+  if (!project) return;
+  setProjectCurrentTaskIds(project, [...getProjectCurrentTaskIds(project), taskId]);
+}
+
+function removeProjectCurrentTasks(project, taskIds) {
+  if (!project) return;
+  setProjectCurrentTaskIds(
+    project,
+    getProjectCurrentTaskIds(project).filter((taskId) => !taskIds.includes(taskId))
+  );
 }
 
 function countTodayTasks(projectId) {
@@ -1461,7 +1525,7 @@ function renderPendingOther(item) {
 
 function renderDoing() {
   const tasks = state.projects
-    .map((project) => getTask(project.currentTaskId))
+    .flatMap((project) => getProjectCurrentTasks(project))
     .filter((task) => task && task.status !== "completed")
     .sort((a, b) => {
       const todayDiff = Number(b.plannedDate === TODAY) - Number(a.plannedDate === TODAY);
@@ -1474,7 +1538,7 @@ function renderDoing() {
         <div>
           <p class="eyebrow">In Progress</p>
           <h1>正在做</h1>
-          <p>这里集中显示每个总任务看板中被插旗的当前任务，不改变它们在任务树中的位置。</p>
+          <p>这里集中显示被插旗的当前任务，不改变它们在任务树中的位置。</p>
         </div>
         <div class="page-actions">
           <span class="count-badge">${tasks.length}</span>
@@ -1722,7 +1786,8 @@ function renderBoardCard(project) {
   const todayCount = countTodayTasks(project.id);
   const incompleteCount = tasks.filter((task) => task.status !== "completed").length;
   const stuckCount = tasks.filter((task) => task.status === "stuck").length;
-  const flagged = getTask(project.currentTaskId);
+  const flaggedTasks = getProjectCurrentTasks(project);
+  const flaggedPreview = flaggedTasks.slice(0, 2).map((task) => task.title).join("、");
   return `
     <article class="board-card ${todayCount ? "today-active" : ""}" role="button" tabindex="0" data-action="open-project" data-id="${project.id}" aria-label="打开${escapeHtml(project.name)}">
       <div class="card-header">
@@ -1738,7 +1803,11 @@ function renderBoardCard(project) {
         <div class="board-stat"><span>未完成</span><strong>${incompleteCount}</strong></div>
         <div class="board-stat"><span>卡住</span><strong>${stuckCount}</strong></div>
       </div>
-      ${flagged ? `<div class="flag-summary">当前任务：${escapeHtml(flagged.title)}</div>` : `<div class="muted">尚未设置当前任务</div>`}
+      ${
+        flaggedTasks.length
+          ? `<div class="flag-summary">当前任务：${escapeHtml(flaggedPreview)}${flaggedTasks.length > 2 ? ` 等 ${flaggedTasks.length} 个` : ""}</div>`
+          : `<div class="muted">尚未设置当前任务</div>`
+      }
     </article>
   `;
 }
@@ -1949,7 +2018,7 @@ function renderTreeLine(taskId, depth, selectedTaskId) {
   const expanded = state.ui.expandedTaskIds.includes(task.id) && !completedCollapsed;
   return `
     <div>
-      <div class="tree-line ${task.id === selectedTaskId ? "active" : ""} ${project?.currentTaskId === task.id ? "flagged" : ""} ${task.status === "completed" ? "completed" : ""}" style="--depth:${depth}" draggable="true" data-tree-task-id="${task.id}">
+      <div class="tree-line ${task.id === selectedTaskId ? "active" : ""} ${isProjectCurrentTask(project, task.id) ? "flagged" : ""} ${task.status === "completed" ? "completed" : ""}" style="--depth:${depth}" draggable="true" data-tree-task-id="${task.id}">
         ${
           hasChildren
             ? `<button class="tree-toggle" type="button" data-action="${task.status === "completed" ? "toggle-completed" : "toggle-tree"}" data-id="${task.id}" aria-label="${expanded ? "折叠" : "展开"}">${expanded ? "−" : "+"}</button>`
@@ -1957,7 +2026,7 @@ function renderTreeLine(taskId, depth, selectedTaskId) {
         }
         <span class="drag-handle" aria-hidden="true">⋮⋮</span>
         <button class="tree-label" type="button" data-action="select-task" data-id="${task.id}">${escapeHtml(task.title)}</button>
-        ${project?.currentTaskId === task.id ? `<span class="tag flagged">旗</span>` : ""}
+        ${isProjectCurrentTask(project, task.id) ? `<span class="tag flagged">旗</span>` : ""}
       </div>
       ${expanded ? task.childIds.map((childId) => renderTreeLine(childId, depth + 1, selectedTaskId)).join("") : ""}
     </div>
@@ -1966,7 +2035,7 @@ function renderTreeLine(taskId, depth, selectedTaskId) {
 
 function renderSelectedTask(project, task) {
   const timer = state.timer;
-  const flagged = project.currentTaskId === task.id;
+  const flagged = isProjectCurrentTask(project, task.id);
   const inToday = state.dailyBoard.todayTaskIds.includes(task.id);
   const latestStuck = getLatestTaskHistory(task.id, "stuck_note");
   return `
@@ -2470,8 +2539,9 @@ function toggleCurrentTask(taskId) {
     if (task?.status === "completed") showToast("已完成任务不能设为当前任务。");
     return;
   }
-  const removing = project.currentTaskId === taskId;
-  project.currentTaskId = removing ? null : taskId;
+  const removing = isProjectCurrentTask(project, taskId);
+  if (removing) removeProjectCurrentTasks(project, [taskId]);
+  else addProjectCurrentTask(project, taskId);
   state.histories.push(makeHistory(task.id, project.id, removing ? "unflagged" : "flagged", {}));
   touchProject(project.id);
   render();
@@ -2574,7 +2644,7 @@ function deleteTaskBranch(taskId) {
     entry.childIds = (entry.childIds || []).filter((id) => !taskIds.includes(id));
   });
   project.topLevelTaskIds = project.topLevelTaskIds.filter((id) => !taskIds.includes(id));
-  if (taskIds.includes(project.currentTaskId)) project.currentTaskId = null;
+  removeProjectCurrentTasks(project, taskIds);
   taskIds.forEach((id) => delete state.tasks[id]);
 
   state.dailyBoard.todayTaskIds = state.dailyBoard.todayTaskIds.filter((id) => !taskIds.includes(id));
@@ -2637,7 +2707,7 @@ function completeTask(taskId, includeBranch, deferRender = false) {
     task.completedAt = nowIso();
     task.updatedAt = nowIso();
     const project = getProject(task.projectId);
-    if (project?.currentTaskId === task.id) project.currentTaskId = null;
+    removeProjectCurrentTasks(project, [task.id]);
     state.histories.push(makeHistory(task.id, task.projectId, "completed", { includeBranch }));
     if (state.dailyBoard.todayTaskIds.includes(task.id)) {
       state.dailyBoard.todayTaskIds = state.dailyBoard.todayTaskIds.filter((dailyId) => dailyId !== task.id);
@@ -2977,7 +3047,7 @@ function handleFormSubmit(event) {
     });
     task.status = "in_progress";
     task.updatedAt = nowIso();
-    project.currentTaskId = task.id;
+    addProjectCurrentTask(project, task.id);
     state.histories.push(makeHistory(task.id, project.id, "flagged", { source: "doing_quick_add" }));
     syncTaskWithPlannedDate(task, "doing_schedule");
     if (data.get("addToday")) addTaskToToday(task.id, "doing_quick_add");
@@ -2999,7 +3069,7 @@ function handleFormSubmit(event) {
     if (data.get("createChild") && nextAction) {
       const child = createTask({ title: nextAction, projectId: task.projectId, parentId: task.id, source: "progress" });
       const project = getProject(task.projectId);
-      project.currentTaskId = child.id;
+      addProjectCurrentTask(project, child.id);
       state.histories.push(makeHistory(child.id, child.projectId, "flagged", { source: "progress" }));
     }
     touchProject(task.projectId);
