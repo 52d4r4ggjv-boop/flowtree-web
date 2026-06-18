@@ -99,7 +99,7 @@
         <div>
           <p class="eyebrow">Cloud workspace</p>
           <h1 id="authTitle">登录后继续</h1>
-          <p class="auth-copy">你的任务、记录和时间计划会加密传输，并只对当前账户开放。</p>
+          <p class="auth-copy" id="authCopy">你的任务、记录和时间计划会加密传输，并只对当前账户开放。登录状态会自动保留。</p>
         </div>
         <form class="auth-form" id="authForm">
           <label id="authEmailField">
@@ -107,14 +107,14 @@
             <input id="authEmail" name="email" type="email" autocomplete="email" required />
           </label>
           <label>
-            密码
+            密码（登录密码）
             <input id="authPassword" name="password" type="password" autocomplete="current-password" minlength="6" required />
           </label>
           <p class="auth-message" id="authMessage" aria-live="polite"></p>
           <button class="primary-button" id="authSubmitButton" type="submit">登录</button>
           <div class="auth-secondary-actions" id="authSecondaryActions">
-            <button class="secondary-button" type="button" data-action="sign-up">创建账户</button>
-            <button class="text-button" type="button" data-action="request-password-reset">忘记密码</button>
+            <button class="secondary-button" type="button" data-action="sign-up">创建账户（使用上方密码）</button>
+            <button class="text-button" type="button" data-action="request-password-reset">设置/重置密码</button>
           </div>
         </form>
       </section>

@@ -1775,6 +1775,18 @@ button.breadcrumb-task:hover {
   line-height: 1.5;
 }
 
+.auth-message[data-tone="info"] {
+  color: var(--muted);
+}
+
+.auth-message[data-tone="success"] {
+  color: var(--green);
+}
+
+.auth-message[data-tone="error"] {
+  color: var(--rose);
+}
+
 .auth-secondary-actions {
   display: grid;
   grid-template-columns: 1fr auto;
