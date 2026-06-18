@@ -1049,14 +1049,159 @@ button.breadcrumb-task:hover {
   gap: 10px;
 }
 
-.task-note-composer textarea {
-  min-height: 130px;
+.rich-editor-shell {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
   background: var(--surface);
+}
+
+.rich-editor-toolbar {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-height: 42px;
+  padding: 6px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 254, 250, 0.92);
+}
+
+.rich-format-select {
+  width: 82px;
+  min-height: 30px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--surface-muted);
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.rich-tool-button {
+  display: inline-grid;
+  width: 31px;
+  height: 31px;
+  min-height: 31px;
+  place-items: center;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 0.86rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.rich-tool-button:hover {
+  background: var(--surface-muted);
+}
+
+.rich-attachment-button input {
+  display: none;
+}
+
+.toolbar-divider {
+  width: 1px;
+  height: 24px;
+  margin: 0 3px;
+  background: var(--line);
+}
+
+.highlight-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #b83bd0;
+}
+
+.rich-editor {
+  min-height: 150px;
+  padding: 14px;
+  color: var(--ink);
+  line-height: 1.65;
+  outline: none;
+  overflow-wrap: anywhere;
+}
+
+.rich-editor:empty::before {
+  color: color-mix(in srgb, var(--muted) 58%, white);
+  content: attr(data-placeholder);
+}
+
+.rich-editor h2,
+.rich-note-content h2 {
+  margin: 0.2em 0 0.35em;
+  font-size: 1.35rem;
+}
+
+.rich-editor h3,
+.rich-note-content h3 {
+  margin: 0.25em 0 0.35em;
+  font-size: 1.08rem;
+}
+
+.rich-editor h4,
+.rich-note-content h4 {
+  margin: 0.25em 0 0.35em;
+  font-size: 0.94rem;
+}
+
+.rich-editor blockquote,
+.rich-note-content blockquote {
+  margin: 0.5em 0;
+  padding-left: 12px;
+  border-left: 3px solid var(--line-strong);
+  color: var(--muted);
+}
+
+.rich-editor pre,
+.rich-note-content pre {
+  margin: 0.5em 0;
+  padding: 9px 10px;
+  border-radius: 6px;
+  background: var(--surface-muted);
+  white-space: pre-wrap;
+}
+
+.rich-editor ul,
+.rich-editor ol,
+.rich-note-content ul,
+.rich-note-content ol {
+  margin: 0.45em 0;
+  padding-left: 1.3em;
+}
+
+.rich-editor table,
+.rich-note-content table {
+  width: 100%;
+  margin: 0.6em 0;
+  border-collapse: collapse;
+}
+
+.rich-editor td,
+.rich-editor th,
+.rich-note-content td,
+.rich-note-content th {
+  min-width: 70px;
+  padding: 7px;
+  border: 1px solid var(--line);
+}
+
+.rich-check-item {
+  list-style: none;
+}
+
+.rich-highlight {
+  background: var(--gold-soft);
+}
+
+.rich-note-content {
+  line-height: 1.6;
+  white-space: normal;
 }
 
 .task-note-fields {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto auto;
+  grid-template-columns: minmax(180px, 1fr) auto;
   gap: 8px;
   align-items: center;
 }

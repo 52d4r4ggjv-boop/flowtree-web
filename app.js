@@ -125,6 +125,45 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function sanitizeRichHtml(html) {
+  const template = document.createElement("template");
+  template.innerHTML = String(html || "");
+  const allowed = new Set(["B", "STRONG", "I", "EM", "U", "S", "STRIKE", "P", "DIV", "BR", "UL", "OL", "LI", "BLOCKQUOTE", "PRE", "CODE", "H2", "H3", "H4", "SPAN", "FONT", "TABLE", "TBODY", "TR", "TD", "TH"]);
+  const allowedClasses = new Set(["rich-highlight", "rich-check-item"]);
+
+  template.content.querySelectorAll("*").forEach((node) => {
+    if (!allowed.has(node.tagName)) {
+      node.replaceWith(...node.childNodes);
+      return;
+    }
+    if (node.style?.backgroundColor || node.getAttribute("bgcolor")) node.classList.add("rich-highlight");
+    [...node.attributes].forEach((attribute) => {
+      if (attribute.name !== "class") node.removeAttribute(attribute.name);
+    });
+    if (node.className) {
+      node.className = node.className
+        .split(/\s+/)
+        .filter((className) => allowedClasses.has(className))
+        .join(" ");
+      if (!node.className) node.removeAttribute("class");
+    }
+  });
+
+  return template.innerHTML.trim();
+}
+
+function getPlainTextFromHtml(html) {
+  const template = document.createElement("template");
+  template.innerHTML = sanitizeRichHtml(html).replace(/<\/(p|div|h2|h3|h4|li|blockquote|pre|td|th)>/gi, "\n");
+  return template.content.textContent.replace(/\u00a0/g, " ").trim();
+}
+
+function renderNoteContent(note) {
+  const safeHtml = note.contentHtml ? sanitizeRichHtml(note.contentHtml) : "";
+  if (safeHtml) return `<div class="rich-note-content">${safeHtml}</div>`;
+  return note.content ? `<p>${escapeHtml(note.content)}</p>` : "";
+}
+
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
 }
@@ -246,6 +285,7 @@ function normalizeV2(saved) {
           taskId: note.taskId || null,
           projectId: note.projectId || null,
           images: note.images || [],
+          contentHtml: note.contentHtml ? sanitizeRichHtml(note.contentHtml) : "",
         }))
       : [],
     recentInputs: Array.isArray(saved.recentInputs) ? saved.recentInputs.slice(0, 5) : [],
@@ -1642,7 +1682,7 @@ function renderNoteItems(notes) {
             <time>${formatDateTime(note.updatedAt)}</time>
             ${renderNoteContext(note)}
           </div>
-          ${note.content ? `<p>${escapeHtml(note.content)}</p>` : ""}
+          ${renderNoteContent(note)}
           ${renderNoteImages(note.images)}
           <div class="tag-row">${(note.tags || []).map((tag) => `<span class="tag">#${escapeHtml(tag)}</span>`).join("")}</div>
           <div class="card-actions">
@@ -2104,13 +2144,39 @@ function renderTaskNotebook(project, task) {
         <span class="muted">${notes.length} 条记录</span>
       </header>
       <div class="task-note-composer">
-        <textarea id="taskNoteComposer" rows="5" placeholder="写下这项任务需要的资料、想法或备注，可使用 #标签"></textarea>
+        <div class="rich-editor-shell">
+          <div class="rich-editor-toolbar" aria-label="记录格式工具栏">
+            <select class="rich-format-select" id="taskNoteFormat" aria-label="格式">
+              <option value="">格式</option>
+              <option value="h2">标题</option>
+              <option value="h3">小标题</option>
+              <option value="h4">副标题</option>
+              <option value="p">正文</option>
+              <option value="pre">等宽样式</option>
+              <option value="blockquote">块引用</option>
+            </select>
+            <span class="toolbar-divider" aria-hidden="true"></span>
+            <button class="rich-tool-button" type="button" data-action="rich-command" data-value="bold" title="加粗" aria-label="加粗"><strong>B</strong></button>
+            <button class="rich-tool-button" type="button" data-action="rich-command" data-value="italic" title="斜体" aria-label="斜体"><em>I</em></button>
+            <button class="rich-tool-button" type="button" data-action="rich-command" data-value="underline" title="下划线" aria-label="下划线"><u>U</u></button>
+            <button class="rich-tool-button" type="button" data-action="rich-command" data-value="strikeThrough" title="删除线" aria-label="删除线"><s>S</s></button>
+            <button class="rich-tool-button" type="button" data-action="rich-command" data-value="highlight" title="标记色" aria-label="标记色"><span class="highlight-dot"></span></button>
+            <span class="toolbar-divider" aria-hidden="true"></span>
+            <button class="rich-tool-button" type="button" data-action="rich-command" data-value="insertUnorderedList" title="项目符号列表" aria-label="项目符号列表">•</button>
+            <button class="rich-tool-button" type="button" data-action="rich-command" data-value="insertOrderedList" title="编号列表" aria-label="编号列表">1.</button>
+            <button class="rich-tool-button" type="button" data-action="rich-command" data-value="checklist" title="待办项" aria-label="待办项">☐</button>
+            <button class="rich-tool-button" type="button" data-action="rich-command" data-value="table" title="表格" aria-label="表格">▦</button>
+            <button class="rich-tool-button" type="button" data-action="rich-command" data-value="blockquote" title="引用" aria-label="引用">❝</button>
+            <button class="rich-tool-button" type="button" data-action="rich-command" data-value="code" title="等宽" aria-label="等宽">⌘</button>
+            <label class="rich-tool-button rich-attachment-button" title="添加图片" aria-label="添加图片">
+              ⌕
+              <input id="taskNoteImages" type="file" accept="image/*" multiple data-task-id="${task.id}" />
+            </label>
+          </div>
+          <div id="taskNoteEditor" class="rich-editor" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="写下这项任务需要的资料、想法或备注，可使用 #标签"></div>
+        </div>
         <div class="task-note-fields">
           <input id="taskNoteTags" placeholder="标签，例如：资料 灵感 待确认" />
-          <label class="secondary-button file-button">
-            添加图片
-            <input id="taskNoteImages" type="file" accept="image/*" multiple data-task-id="${task.id}" />
-          </label>
           <button class="primary-button" type="button" data-action="save-task-note" data-id="${task.id}">保存记录</button>
         </div>
         <div class="task-image-drafts" id="taskImageDrafts">
@@ -2134,7 +2200,7 @@ function renderTaskNotebook(project, task) {
                   (note) => `
                     <article class="task-note-item">
                       <time>${formatDateTime(note.updatedAt)}</time>
-                      ${note.content ? `<p>${escapeHtml(note.content)}</p>` : ""}
+                      ${renderNoteContent(note)}
                       ${renderNoteImages(note.images)}
                       <div class="tag-row">${(note.tags || []).map((tag) => `<span class="tag">#${escapeHtml(tag)}</span>`).join("")}</div>
                       <div class="card-actions">
@@ -3179,6 +3245,7 @@ function handleFormSubmit(event) {
         .filter(Boolean),
     ]);
     note.content = appendMissingTags(content, tags);
+    note.contentHtml = "";
     note.tags = tags;
     note.updatedAt = nowIso();
     closeForm();
@@ -3370,6 +3437,50 @@ function updateRecognizedTags() {
     : `<span class="muted">输入 #标签 后会自动识别</span>`;
 }
 
+function getTaskNoteEditor() {
+  return document.querySelector("#taskNoteEditor");
+}
+
+function insertHtmlAtSelection(html) {
+  document.execCommand("insertHTML", false, html);
+}
+
+function applyRichCommand(command) {
+  const editor = getTaskNoteEditor();
+  if (!editor) return;
+  editor.focus();
+  if (command === "highlight") {
+    document.execCommand("backColor", false, "#f5ecd5");
+    return;
+  }
+  if (command === "blockquote") {
+    document.execCommand("formatBlock", false, "blockquote");
+    return;
+  }
+  if (command === "code") {
+    document.execCommand("formatBlock", false, "pre");
+    return;
+  }
+  if (command === "checklist") {
+    insertHtmlAtSelection('<ul><li class="rich-check-item">☐ </li></ul>');
+    return;
+  }
+  if (command === "table") {
+    insertHtmlAtSelection("<table><tbody><tr><td> </td><td> </td></tr><tr><td> </td><td> </td></tr></tbody></table><p></p>");
+    return;
+  }
+  document.execCommand(command, false, null);
+}
+
+function applyRichFormat(format) {
+  const editor = getTaskNoteEditor();
+  if (!editor || !format) return;
+  editor.focus();
+  document.execCommand("formatBlock", false, format);
+  const formatSelect = document.querySelector("#taskNoteFormat");
+  if (formatSelect) formatSelect.value = "";
+}
+
 function editNote(noteId) {
   const note = state.notes.find((entry) => entry.id === noteId);
   if (!note) return;
@@ -3389,7 +3500,9 @@ function editNote(noteId) {
 async function saveTaskNote(taskId) {
   const task = getTask(taskId);
   if (!task) return;
-  const content = document.querySelector("#taskNoteComposer")?.value.trim() || "";
+  const editor = getTaskNoteEditor();
+  const contentHtml = sanitizeRichHtml(editor?.innerHTML || "");
+  const content = getPlainTextFromHtml(contentHtml);
   const tagInput = document.querySelector("#taskNoteTags")?.value || "";
   const draftImages = taskNoteDraftImages[taskId] || [];
   if (!content && !draftImages.length) {
@@ -3418,6 +3531,7 @@ async function saveTaskNote(taskId) {
   const note = {
     id: createId("note"),
     content: appendMissingTags(content, tags),
+    contentHtml,
     tags,
     taskId: task.id,
     projectId: task.projectId,
@@ -3909,6 +4023,7 @@ async function handleAction(action, trigger) {
     closeNotesDrawer();
   }
   if (action === "save-note") saveNoteFromComposer();
+  if (action === "rich-command") applyRichCommand(trigger.dataset.value);
   if (action === "save-task-note") await saveTaskNote(id);
   if (action === "remove-task-note-image") {
     const taskId = trigger.dataset.taskId;
@@ -3991,6 +4106,10 @@ async function handleChange(event) {
   if (event.target.id === "taskNoteImages") {
     const taskId = event.target.dataset.taskId;
     await addTaskNoteImages(taskId, event.target.files || []);
+    return;
+  }
+  if (event.target.id === "taskNoteFormat") {
+    applyRichFormat(event.target.value);
     return;
   }
   const pendingField = event.target.dataset.pendingField;
