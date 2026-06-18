@@ -101,6 +101,7 @@ const els = {
   authEmailField: document.querySelector("#authEmailField"),
   authEmail: document.querySelector("#authEmail"),
   authPassword: document.querySelector("#authPassword"),
+  authPasswordLabel: document.querySelector("#authPasswordLabel"),
   authPasswordToggle: document.querySelector("#authPasswordToggle"),
   authMessage: document.querySelector("#authMessage"),
   authSubmitButton: document.querySelector("#authSubmitButton"),
@@ -701,7 +702,12 @@ function showPasswordRecovery() {
   if (els.authTitle) els.authTitle.textContent = "设置新登录密码";
   if (els.authCopy) els.authCopy.textContent = "这里不是找回旧密码。请在这里输入一个新密码并点击保存，保存后以后登录就用它。";
   els.authEmailField?.classList.add("hidden");
+  if (els.authEmail) {
+    els.authEmail.required = false;
+    els.authEmail.disabled = true;
+  }
   els.authSecondaryActions?.classList.add("hidden");
+  if (els.authPasswordLabel) els.authPasswordLabel.textContent = "新密码";
   if (els.authPassword) {
     els.authPassword.value = "";
     els.authPassword.autocomplete = "new-password";
@@ -718,7 +724,12 @@ function resetAuthFormMode() {
   if (els.authTitle) els.authTitle.textContent = "登录后继续";
   if (els.authCopy) els.authCopy.textContent = "你的任务、记录和时间计划会加密传输，并只对当前账户开放。登录状态会自动保留。";
   els.authEmailField?.classList.remove("hidden");
+  if (els.authEmail) {
+    els.authEmail.disabled = false;
+    els.authEmail.required = true;
+  }
   els.authSecondaryActions?.classList.remove("hidden");
+  if (els.authPasswordLabel) els.authPasswordLabel.textContent = "密码（登录密码）";
   if (els.authPassword) {
     els.authPassword.autocomplete = "current-password";
     els.authPassword.type = "password";
