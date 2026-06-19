@@ -2175,24 +2175,13 @@ function renderTaskNotebook(project, task) {
               <input id="taskNoteImages" type="file" accept="image/*" multiple data-task-id="${task.id}" />
             </label>
           </div>
-          <div id="taskNoteEditor" class="rich-editor" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="写下这项任务需要的资料、想法或备注，可使用 #标签"></div>
+          <div id="taskNoteEditor" class="rich-editor" contenteditable="true" role="textbox" aria-multiline="true" data-task-id="${task.id}" data-placeholder="写下这项任务需要的资料、想法或备注，可使用 #标签"></div>
         </div>
         <div class="task-note-fields">
           <input id="taskNoteTags" placeholder="标签，例如：资料 灵感 待确认" />
           <button class="primary-button" type="button" data-action="save-task-note" data-id="${task.id}">保存记录</button>
         </div>
-        <div class="task-image-drafts" id="taskImageDrafts">
-          ${draftImages
-            .map(
-              (image) => `
-                <div class="task-image-draft">
-                  <img src="${escapeHtml(image.dataUrl)}" alt="${escapeHtml(image.name)}" />
-                  <button class="icon-button" type="button" data-action="remove-task-note-image" data-id="${escapeHtml(image.id)}" data-task-id="${task.id}" aria-label="移除图片">×</button>
-                </div>
-              `
-            )
-            .join("")}
-        </div>
+        <div class="task-image-drafts" id="taskImageDrafts">${renderTaskImageDraftItems(task.id, draftImages)}</div>
       </div>
       <div class="task-note-list">
         ${
@@ -2218,6 +2207,28 @@ function renderTaskNotebook(project, task) {
       </div>
     </section>
   `;
+}
+
+function renderTaskImageDraftItems(taskId, draftImages = taskNoteDraftImages[taskId] || []) {
+  return draftImages
+    .map(
+      (image) => `
+        <div class="task-image-draft">
+          <img src="${escapeHtml(image.dataUrl)}" alt="${escapeHtml(image.name)}" />
+          <button class="icon-button" type="button" data-action="remove-task-note-image" data-id="${escapeHtml(image.id)}" data-task-id="${taskId}" aria-label="移除图片">×</button>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function refreshTaskImageDrafts(taskId) {
+  const container = document.querySelector("#taskImageDrafts");
+  if (!container) {
+    render();
+    return;
+  }
+  container.innerHTML = renderTaskImageDraftItems(taskId);
 }
 
 function renderTimerPanel(selectedTask, timer) {
@@ -3557,28 +3568,53 @@ async function addTaskNoteImages(taskId, files) {
   const available = Math.max(0, 4 - existing.length);
   if (!available) {
     showToast("一条记录最多添加 4 张图片。");
-    return;
+    return 0;
   }
   const selected = [...files].filter((file) => file.type.startsWith("image/")).slice(0, available);
   const images = [];
   for (const file of selected) {
     if (file.size > 10 * 1024 * 1024) {
-      showToast(`${file.name} 超过 10MB，未添加。`);
+      showToast(`${file.name || "粘贴图片"} 超过 10MB，未添加。`);
       continue;
     }
     try {
       images.push({
         id: createId("image"),
-        name: file.name,
+        name: file.name || `粘贴图片-${images.length + 1}.jpg`,
         dataUrl: await compressImageFile(file),
       });
     } catch (error) {
       console.warn("Image could not be added", error);
-      showToast(`${file.name} 无法读取。`);
+      showToast(`${file.name || "粘贴图片"} 无法读取。`);
     }
   }
   taskNoteDraftImages[taskId] = [...existing, ...images];
-  render();
+  refreshTaskImageDrafts(taskId);
+  return images.length;
+}
+
+function getClipboardImageFiles(clipboardData) {
+  const files = [];
+  if (!clipboardData) return files;
+  [...(clipboardData.files || [])].forEach((file) => {
+    if (file.type?.startsWith("image/")) files.push(file);
+  });
+  [...(clipboardData.items || [])].forEach((item) => {
+    if (item.kind !== "file" || !item.type?.startsWith("image/")) return;
+    const file = item.getAsFile?.();
+    if (file && !files.includes(file)) files.push(file);
+  });
+  return files;
+}
+
+async function handleRichEditorPaste(event) {
+  const editor = event.target.closest?.("#taskNoteEditor");
+  if (!editor) return;
+  const imageFiles = getClipboardImageFiles(event.clipboardData);
+  if (!imageFiles.length) return;
+  event.preventDefault();
+  const addedCount = await addTaskNoteImages(editor.dataset.taskId, imageFiles);
+  if (addedCount) showToast(`已粘贴 ${addedCount} 张图片。`);
 }
 
 function toggleRichCheckItem(checkBox) {
@@ -4045,7 +4081,7 @@ async function handleAction(action, trigger) {
   if (action === "remove-task-note-image") {
     const taskId = trigger.dataset.taskId;
     taskNoteDraftImages[taskId] = (taskNoteDraftImages[taskId] || []).filter((image) => image.id !== id);
-    render();
+    refreshTaskImageDrafts(taskId);
   }
   if (action === "add-note-tag") {
     const input = document.querySelector("#noteTagInput");
@@ -4240,6 +4276,12 @@ document.addEventListener("keydown", (event) => {
 
 document.addEventListener("change", handleChange);
 document.addEventListener("input", handleInput);
+document.addEventListener("paste", (event) => {
+  handleRichEditorPaste(event).catch((error) => {
+    console.warn("Pasted image could not be added", error);
+    showToast("粘贴图片失败。");
+  });
+});
 document.addEventListener("dragstart", handleDragStart);
 document.addEventListener("dragover", handleDragOver);
 document.addEventListener("drop", handleDrop);
