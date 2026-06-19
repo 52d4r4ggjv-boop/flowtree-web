@@ -1127,6 +1127,13 @@ button.breadcrumb-task:hover {
   content: attr(data-placeholder);
 }
 
+.note-rich-editor {
+  min-height: 132px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
 .rich-editor h2,
 .rich-note-content h2 {
   margin: 0.2em 0 0.35em;
@@ -1236,6 +1243,40 @@ button.breadcrumb-task:hover {
 
 .rich-check-text {
   min-width: 1em;
+}
+
+.rich-inline-image-wrap {
+  display: inline-block;
+  max-width: 100%;
+  margin: 6px 6px 6px 0;
+  vertical-align: top;
+  cursor: zoom-in;
+}
+
+.rich-inline-image-wrap[data-size="small"] {
+  width: min(150px, 48%);
+}
+
+.rich-inline-image-wrap[data-size="medium"] {
+  width: min(260px, 72%);
+}
+
+.rich-inline-image-wrap[data-size="large"] {
+  width: min(520px, 100%);
+}
+
+.rich-inline-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 420px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  object-fit: contain;
+}
+
+.rich-note-content .rich-inline-image-wrap {
+  cursor: default;
 }
 
 .rich-highlight {

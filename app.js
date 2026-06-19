@@ -128,8 +128,9 @@ function escapeHtml(value) {
 function sanitizeRichHtml(html) {
   const template = document.createElement("template");
   template.innerHTML = String(html || "");
-  const allowed = new Set(["B", "STRONG", "I", "EM", "U", "S", "STRIKE", "P", "DIV", "BR", "UL", "OL", "LI", "BLOCKQUOTE", "PRE", "CODE", "H2", "H3", "H4", "SPAN", "FONT", "TABLE", "TBODY", "TR", "TD", "TH"]);
-  const allowedClasses = new Set(["rich-highlight", "rich-check-list", "rich-check-item", "rich-check-box", "rich-check-text"]);
+  const allowed = new Set(["B", "STRONG", "I", "EM", "U", "S", "STRIKE", "P", "DIV", "BR", "UL", "OL", "LI", "BLOCKQUOTE", "PRE", "CODE", "H2", "H3", "H4", "SPAN", "FONT", "TABLE", "TBODY", "TR", "TD", "TH", "IMG"]);
+  const allowedClasses = new Set(["rich-highlight", "rich-check-list", "rich-check-item", "rich-check-box", "rich-check-text", "rich-inline-image-wrap", "rich-inline-image"]);
+  const allowedImageSizes = new Set(["small", "medium", "large"]);
 
   template.content.querySelectorAll("*").forEach((node) => {
     if (!allowed.has(node.tagName)) {
@@ -137,6 +138,9 @@ function sanitizeRichHtml(html) {
       return;
     }
     const checkedValue = node.getAttribute("data-checked") === "true" ? "true" : "false";
+    const imageSrc = node.getAttribute("src") || "";
+    const imageAlt = node.getAttribute("alt") || "";
+    const imageSize = allowedImageSizes.has(node.getAttribute("data-size")) ? node.getAttribute("data-size") : "medium";
     if (node.style?.backgroundColor || node.getAttribute("bgcolor")) node.classList.add("rich-highlight");
     [...node.attributes].forEach((attribute) => {
       if (attribute.name !== "class") node.removeAttribute(attribute.name);
@@ -149,9 +153,23 @@ function sanitizeRichHtml(html) {
       if (!node.className) node.removeAttribute("class");
     }
     if (node.classList.contains("rich-check-item")) node.setAttribute("data-checked", checkedValue);
+    if (node.classList.contains("rich-inline-image-wrap")) node.setAttribute("data-size", imageSize);
+    if (node.tagName === "IMG") {
+      if (!isSafeRichImageSrc(imageSrc)) {
+        node.remove();
+        return;
+      }
+      node.setAttribute("src", imageSrc);
+      node.setAttribute("alt", imageAlt.slice(0, 80));
+      node.classList.add("rich-inline-image");
+    }
   });
 
   return template.innerHTML.trim();
+}
+
+function isSafeRichImageSrc(src) {
+  return /^data:image\/(png|jpe?g|webp|gif);base64,/i.test(src) || /^https:\/\//i.test(src);
 }
 
 function getPlainTextFromHtml(html) {
@@ -1655,7 +1673,7 @@ function getNotesOverview() {
 function renderNoteComposer() {
   return `
     <div class="note-composer">
-      <textarea id="noteComposer" rows="4" placeholder="写下记录，可直接使用 #标签"></textarea>
+      <div id="noteComposer" class="rich-editor note-rich-editor" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="写下记录，可直接使用 #标签；可直接粘贴图片"></div>
       <div class="tag-row" id="recognizedTags">
         ${
           state.ui.noteManualTags.length
@@ -3414,8 +3432,10 @@ function appendMissingTags(content, tags) {
 
 function saveNoteFromComposer() {
   const composer = document.querySelector("#noteComposer");
-  const content = composer?.value.trim();
-  if (!content) {
+  const contentHtml = getNoteComposerHtml();
+  const content = getPlainTextFromHtml(contentHtml) || getNoteComposerText();
+  const hasInlineImage = Boolean(composer?.querySelector?.(".rich-inline-image"));
+  if (!content && !hasInlineImage) {
     showToast("先写一点内容。");
     return;
   }
@@ -3423,6 +3443,7 @@ function saveNoteFromComposer() {
   const note = {
     id: createId("note"),
     content: appendMissingTags(content, tags),
+    contentHtml,
     tags,
     taskId: null,
     projectId: null,
@@ -3431,9 +3452,30 @@ function saveNoteFromComposer() {
     updatedAt: nowIso(),
   };
   state.notes.unshift(note);
+  const previousManualTags = [...state.ui.noteManualTags];
   state.ui.noteManualTags = [];
-  saveState();
+  if (!saveState()) {
+    state.notes = state.notes.filter((entry) => entry.id !== note.id);
+    state.ui.noteManualTags = previousManualTags;
+    return;
+  }
   refreshNotesSurface();
+}
+
+function getNoteComposerHtml() {
+  const composer = document.querySelector("#noteComposer");
+  if (!composer) return "";
+  if (composer.isContentEditable || composer.getAttribute?.("contenteditable") === "true") {
+    return sanitizeRichHtml(composer.innerHTML || "");
+  }
+  return sanitizeRichHtml(escapeHtml(composer.value || "").replace(/\n/g, "<br>"));
+}
+
+function getNoteComposerText() {
+  const composer = document.querySelector("#noteComposer");
+  if (!composer) return "";
+  if (composer.isContentEditable || composer.getAttribute?.("contenteditable") === "true") return composer.textContent.trim();
+  return String(composer.value || "").trim();
 }
 
 function renderEditableTag(tag) {
@@ -3441,10 +3483,9 @@ function renderEditableTag(tag) {
 }
 
 function updateRecognizedTags() {
-  const composer = document.querySelector("#noteComposer");
   const container = document.querySelector("#recognizedTags");
   if (!container) return;
-  const tags = unique([...extractTags(composer?.value || ""), ...state.ui.noteManualTags]);
+  const tags = unique([...extractTags(getNoteComposerText()), ...state.ui.noteManualTags]);
   container.innerHTML = tags.length
     ? tags.map((tag) => renderEditableTag(tag)).join("")
     : `<span class="muted">输入 #标签 后会自动识别</span>`;
@@ -3454,8 +3495,30 @@ function getTaskNoteEditor() {
   return document.querySelector("#taskNoteEditor");
 }
 
-function insertHtmlAtSelection(html) {
-  document.execCommand("insertHTML", false, html);
+function getSelectionRangeInside(container) {
+  const selection = window.getSelection?.();
+  if (!selection?.rangeCount || !container) return null;
+  const range = selection.getRangeAt(0);
+  const root = range.commonAncestorContainer.nodeType === 1 ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement;
+  return root && container.contains(root) ? range.cloneRange() : null;
+}
+
+function restoreSelectionRange(range) {
+  if (!range) return;
+  const selection = window.getSelection?.();
+  if (!selection) return;
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function insertHtmlAtSelection(html, fallbackEditor = null, range = null) {
+  if (fallbackEditor) fallbackEditor.focus();
+  if (range) restoreSelectionRange(range);
+  if (document.queryCommandSupported?.("insertHTML")) {
+    document.execCommand("insertHTML", false, html);
+    return;
+  }
+  if (fallbackEditor) fallbackEditor.insertAdjacentHTML("beforeend", html);
 }
 
 function applyRichCommand(command) {
@@ -3608,13 +3671,62 @@ function getClipboardImageFiles(clipboardData) {
 }
 
 async function handleRichEditorPaste(event) {
-  const editor = event.target.closest?.("#taskNoteEditor");
-  if (!editor) return;
   const imageFiles = getClipboardImageFiles(event.clipboardData);
   if (!imageFiles.length) return;
+  const noteComposer = event.target.closest?.("#noteComposer");
+  if (noteComposer) {
+    event.preventDefault();
+    const addedCount = await pasteInlineImagesIntoNoteComposer(noteComposer, imageFiles);
+    if (addedCount) {
+      showToast(`已粘贴 ${addedCount} 张图片，点击图片可缩放。`);
+      updateRecognizedTags();
+    }
+    return;
+  }
+  const editor = event.target.closest?.("#taskNoteEditor");
+  if (!editor) return;
   event.preventDefault();
   const addedCount = await addTaskNoteImages(editor.dataset.taskId, imageFiles);
   if (addedCount) showToast(`已粘贴 ${addedCount} 张图片。`);
+}
+
+async function pasteInlineImagesIntoNoteComposer(editor, imageFiles) {
+  const existingCount = editor.querySelectorAll(".rich-inline-image").length;
+  const available = Math.max(0, 8 - existingCount);
+  if (!available) {
+    showToast("一条记录最多粘贴 8 张图片。");
+    return 0;
+  }
+  const selected = imageFiles.filter((file) => file.type?.startsWith("image/")).slice(0, available);
+  let range = getSelectionRangeInside(editor);
+  let addedCount = 0;
+  for (const file of selected) {
+    if (file.size > 10 * 1024 * 1024) {
+      showToast(`${file.name || "粘贴图片"} 超过 10MB，未添加。`);
+      continue;
+    }
+    try {
+      const dataUrl = await compressImageFile(file);
+      const imageHtml = `
+        <span class="rich-inline-image-wrap" data-size="medium" contenteditable="false" title="点击切换图片大小">
+          <img class="rich-inline-image" src="${escapeHtml(dataUrl)}" alt="${escapeHtml(file.name || "粘贴图片")}" />
+        </span><span>&nbsp;</span>
+      `;
+      insertHtmlAtSelection(imageHtml, editor, range);
+      range = null;
+      addedCount += 1;
+    } catch (error) {
+      console.warn("Inline image could not be pasted", error);
+      showToast(`${file.name || "粘贴图片"} 无法读取。`);
+    }
+  }
+  return addedCount;
+}
+
+function cycleInlineImageSize(wrapper) {
+  const sizes = ["small", "medium", "large"];
+  const currentIndex = sizes.indexOf(wrapper.dataset.size || "medium");
+  wrapper.dataset.size = sizes[(currentIndex + 1) % sizes.length];
 }
 
 function toggleRichCheckItem(checkBox) {
@@ -4097,7 +4209,7 @@ async function handleAction(action, trigger) {
     const tag = trigger.dataset.value;
     state.ui.noteManualTags = state.ui.noteManualTags.filter((item) => item !== tag);
     const composer = document.querySelector("#noteComposer");
-    if (composer) {
+    if (composer && !composer.isContentEditable && typeof composer.value === "string") {
       composer.value = composer.value
         .replace(new RegExp(`(^|\\s)#${escapeRegExp(tag)}(?=\\s|$)`, "g"), " ")
         .replace(/\s{2,}/g, " ")
@@ -4244,6 +4356,12 @@ function escapeRegExp(value) {
 }
 
 document.addEventListener("click", (event) => {
+  const inlineImage = event.target.closest(".rich-inline-image-wrap");
+  if (inlineImage && inlineImage.closest("#noteComposer")) {
+    event.preventDefault();
+    cycleInlineImageSize(inlineImage);
+    return;
+  }
   const checkBox = event.target.closest(".rich-check-box");
   if (checkBox) {
     event.preventDefault();
