@@ -1200,7 +1200,7 @@ async function uploadTaskNoteImages(taskId, images) {
     const blob = dataUrlToBlob(image.dataUrl);
     const { error } = await cloudClient.storage
       .from(window.FlowTreeCloud.config.imageBucket)
-      .upload(path, blob, { contentType: blob.type, upsert: false });
+      .upload(path, blob, { contentType: blob.type, upsert: true });
     if (error) throw error;
     uploaded.push({ ...image, path });
   }
@@ -3586,14 +3586,15 @@ async function saveTaskNote(taskId) {
     return;
   }
   let images = draftImages;
+  let imageUploadFallback = false;
   if (cloudReady && draftImages.length) {
     showToast("正在上传图片...");
     try {
       images = await uploadTaskNoteImages(taskId, draftImages);
     } catch (error) {
       console.warn("Task note images could not be uploaded", error);
-      showToast("图片上传失败，记录尚未保存。");
-      return;
+      imageUploadFallback = true;
+      images = draftImages.map((image) => ({ ...image, uploadPending: true }));
     }
   }
   const tags = unique([
@@ -3622,7 +3623,7 @@ async function saveTaskNote(taskId) {
     taskNoteDraftImages[taskId] = draftImages;
     return;
   }
-  showToast(cloudReady ? "记录已保存，正在同步。" : "记录已保存。");
+  showToast(imageUploadFallback ? "记录已保存，图片先保存在记录里。" : cloudReady ? "记录已保存，正在同步。" : "记录已保存。");
   render();
 }
 
