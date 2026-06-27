@@ -3,16 +3,16 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>FlowTree 任务树洞</title>
+    <title>FlowTree 工作台 Demo</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <header class="app-header">
-      <a class="brand" href="#/home" aria-label="FlowTree 首页">
+      <a class="brand" href="#/workspace-demo" aria-label="FlowTree 工作台 Demo">
         <span class="brand-mark" aria-hidden="true">F</span>
         <span>
           <strong>FlowTree</strong>
-          <small>任务树洞</small>
+          <small>工作台 Demo</small>
         </span>
       </a>
 
@@ -26,7 +26,7 @@
       </nav>
 
       <div class="header-actions">
-        <span class="sync-status" id="syncStatus" aria-live="polite">仅本机</span>
+        <span class="sync-status" id="syncStatus" aria-live="polite">Demo</span>
         <button class="account-button hidden" id="accountButton" type="button" data-action="sign-out" title="退出登录">
           <span class="account-avatar" id="accountAvatar" aria-hidden="true">U</span>
           <span id="accountLabel">账户</span>
@@ -90,17 +90,17 @@
 
     <div class="auth-gate hidden" id="authGate">
       <section class="auth-panel" aria-labelledby="authTitle">
-        <a class="brand auth-brand" href="#/home" aria-label="FlowTree">
+        <a class="brand auth-brand" href="#/workspace-demo" aria-label="FlowTree">
           <span class="brand-mark" aria-hidden="true">F</span>
           <span>
             <strong>FlowTree</strong>
-            <small>任务树洞</small>
+            <small>工作台 Demo</small>
           </span>
         </a>
         <div>
-          <p class="eyebrow">Cloud workspace</p>
-          <h1 id="authTitle">登录后继续</h1>
-          <p class="auth-copy" id="authCopy">你的任务、记录和时间计划会加密传输，并只对当前账户开放。登录状态会自动保留。</p>
+          <p class="eyebrow">Demo workspace</p>
+          <h1 id="authTitle">Demo</h1>
+          <p class="auth-copy" id="authCopy">这个页面只用于查看工作台 Demo。</p>
         </div>
         <form class="auth-form" id="authForm">
           <label id="authEmailField">
@@ -126,9 +126,9 @@
       </section>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="cloud-config.js"></script>
-    <script src="cloud.js"></script>
+    <script>
+      if (!location.hash) location.hash = "#/workspace-demo";
+    </script>
     <script src="app.js"></script>
   </body>
 </html>

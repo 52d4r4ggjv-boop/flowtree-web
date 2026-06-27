@@ -1,5 +1,6 @@
 const STORAGE_KEY_V2 = "flowtree_state_v2";
 const STORAGE_KEY_V1 = "flowtree_state_v1";
+const WORKSPACE_DEMO_KEY = "flowtree_workspace_demo_v0";
 const LEGACY_CLAIMED_KEY = "flowtree_legacy_claimed_v1";
 const LAST_CLOUD_USER_KEY = "flowtree_last_cloud_user_v1";
 const PASSWORD_RESET_REQUEST_KEY = "flowtree_password_reset_request_v1";
@@ -43,6 +44,15 @@ const historyLabels = {
   unflagged: "取消当前任务",
 };
 
+const workspaceNoteTypeLabels = {
+  idea: "想法",
+  reference: "资料",
+  stuck: "卡点",
+  progress: "进展",
+  decision: "决策",
+  next: "下次继续",
+};
+
 const sampleInput = "我今天要补简历，论文也得定题，猿辅导项目复盘这周要推进。我有点乱，但不想把情侣 App 的想法丢掉。";
 
 let cloudClient = null;
@@ -65,10 +75,12 @@ let boardOrigin = "boards";
 let taskNoteDraftImages = {};
 let draggedTaskId = null;
 let lastDeletedStateSnapshot = null;
+let workspaceDemo = loadWorkspaceDemoState();
 
 const primaryRouteMeta = {
   home: { label: "首页", title: "首页" },
   doing: { label: "正在做", title: "正在做" },
+  workspaceDemo: { label: "新版工作台 Demo", title: "工作台 Demo" },
   notes: { label: "记事本", title: "记事本" },
   boards: { label: "总任务看板", title: "总任务看板" },
   daily: { label: "今日任务", title: "今日任务" },
@@ -195,6 +207,10 @@ function getRoute() {
   if (parts[0] === "board") {
     return { name: "board", projectId: parts[1] || null, taskId: parts[2] || null };
   }
+  if (parts[0] === "workspace-demo") {
+    if (parts[1] === "thread") return { name: "workspaceThread", threadId: parts[2] || null };
+    return { name: "workspaceDemo" };
+  }
   if (["home", "pending", "doing", "notes", "boards", "daily"].includes(parts[0])) {
     return { name: parts[0] };
   }
@@ -228,6 +244,30 @@ function loadState() {
   const initial = createInitialState();
   localStorage.setItem(getLocalStateKey(), JSON.stringify(initial));
   return initial;
+}
+
+function loadWorkspaceDemoState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(WORKSPACE_DEMO_KEY) || "null");
+    return {
+      foregroundId: saved?.foregroundId || "inbox",
+      floatingOpen: Boolean(saved?.floatingOpen),
+      selectedTaskId: saved?.selectedTaskId || "",
+      records: Array.isArray(saved?.records) ? saved.records : [],
+    };
+  } catch (error) {
+    console.warn("Workspace demo state could not be loaded", error);
+    return {
+      foregroundId: "inbox",
+      floatingOpen: false,
+      selectedTaskId: "",
+      records: [],
+    };
+  }
+}
+
+function saveWorkspaceDemoState() {
+  localStorage.setItem(WORKSPACE_DEMO_KEY, JSON.stringify(workspaceDemo));
 }
 
 function getLocalStateKey(userId = cloudUser?.id) {
@@ -1350,6 +1390,8 @@ function render() {
   if (route.name === "home") renderHome();
   if (route.name === "pending") renderPending();
   if (route.name === "doing") renderDoing();
+  if (route.name === "workspaceDemo") renderWorkspaceDemo();
+  if (route.name === "workspaceThread") renderWorkspaceThread(route);
   if (route.name === "notes") renderNotesPage();
   if (route.name === "boards") renderBoards();
   if (route.name === "daily") renderDaily();
@@ -1359,7 +1401,7 @@ function render() {
 }
 
 function updateNavigation(route) {
-  const primaryName = primaryRouteMeta[route.name] ? route.name : null;
+  const primaryName = route.name === "workspaceThread" ? "workspaceDemo" : primaryRouteMeta[route.name] ? route.name : null;
   document.querySelectorAll("[data-route-link]").forEach((link) => {
     const active = link.dataset.routeLink === primaryName;
     link.classList.toggle("active", active);
@@ -1369,6 +1411,11 @@ function updateNavigation(route) {
 }
 
 function updateDocumentTitle(route) {
+  if (route.name === "workspaceThread") {
+    const thread = getWorkspaceThread(route.threadId);
+    document.title = `${thread?.name || "线程概览"} · FlowTree`;
+    return;
+  }
   if (route.name === "board") {
     const project = getProject(route.projectId);
     const task = getTask(route.taskId);
@@ -1648,6 +1695,607 @@ function renderDoingCard(task) {
       }
     </button>
   `;
+}
+
+function getWorkspaceThreads() {
+  if (!state.projects.length) return getWorkspaceMockThreads();
+  return [...state.projects]
+    .sort((a, b) => {
+      const currentDiff = getProjectCurrentTaskIds(b).length - getProjectCurrentTaskIds(a).length;
+      const todayDiff = countTodayTasks(b.id) - countTodayTasks(a.id);
+      const stuckDiff = getProjectTasks(b.id).filter((task) => task.status === "stuck").length - getProjectTasks(a.id).filter((task) => task.status === "stuck").length;
+      return currentDiff || todayDiff || stuckDiff || new Date(b.updatedAt) - new Date(a.updatedAt);
+    })
+    .map(buildWorkspaceThreadFromProject);
+}
+
+function getWorkspaceThread(threadId) {
+  return getWorkspaceThreads().find((thread) => thread.id === threadId) || null;
+}
+
+function buildWorkspaceThreadFromProject(project) {
+  const tasks = getProjectTasks(project.id);
+  const incomplete = tasks.filter((task) => task.status !== "completed");
+  const currentTasks = getProjectCurrentTasks(project);
+  const todayCount = countTodayTasks(project.id);
+  const stuckTasks = tasks.filter((task) => task.status === "stuck").sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  const anchorTask = currentTasks[0] || stuckTasks[0] || getNearestProjectTask(project.id) || incomplete[0] || tasks[0] || null;
+  const recentRecords = getWorkspaceThreadRecords({ id: project.id, projectId: project.id });
+  const valueTags = unique(tasks.flatMap((task) => task.valueTags || []));
+  const tags = unique([
+    todayCount ? "今日推进" : "",
+    stuckTasks.length ? "卡住" : "",
+    ...valueTags,
+  ]).slice(0, 4);
+
+  return {
+    id: project.id,
+    source: "project",
+    projectId: project.id,
+    name: project.name,
+    currentStatus: getWorkspaceProjectStatus(project, tasks, currentTasks, stuckTasks),
+    nextStep: getWorkspaceNextStep(anchorTask),
+    blocker: getWorkspaceBlocker(stuckTasks[0]),
+    pressure: getWorkspacePressure(tasks),
+    todayActive: todayCount > 0,
+    recentRecord: recentRecords[0]?.content || "暂无记录",
+    updatedAt: project.updatedAt,
+    taskCount: tasks.length,
+    tags,
+  };
+}
+
+function getWorkspaceProjectStatus(project, tasks, currentTasks, stuckTasks) {
+  if (stuckTasks.length) return `有 ${stuckTasks.length} 个卡点待处理。`;
+  if (currentTasks.length) return `当前正在推进 ${currentTasks.length} 个任务：${currentTasks.slice(0, 2).map((task) => task.title).join("、")}。`;
+  const incompleteCount = tasks.filter((task) => task.status !== "completed").length;
+  if (countTodayTasks(project.id)) return `今天有 ${countTodayTasks(project.id)} 个任务计划推进。`;
+  if (incompleteCount) return `有 ${incompleteCount} 个未完成任务，等待选择下一步。`;
+  if (tasks.length) return "已有任务暂时完成，等待新的下一步。";
+  return project.description || "还没有任务，适合先补一个下一步。";
+}
+
+function getWorkspaceNextStep(task) {
+  if (!task) return "补一个可执行的下一步。";
+  if (task.nextAction) return task.nextAction;
+  return `继续推进：${task.title}`;
+}
+
+function getWorkspaceBlocker(task) {
+  if (!task) return "暂无明确卡点。";
+  const latestStuck = getLatestTaskHistory(task.id, "stuck_note");
+  return latestStuck?.content?.stuckPoint || `任务“${task.title}”处于卡住状态。`;
+}
+
+function getNearestProjectTask(projectId) {
+  return getProjectTasks(projectId)
+    .filter((task) => task.status !== "completed")
+    .sort((a, b) => {
+      const todayDiff = Number(b.plannedDate === TODAY) - Number(a.plannedDate === TODAY);
+      const deadlineA = a.deadlineDate ? `${a.deadlineDate}T${a.deadlineTime || "23:59"}` : "9999-12-31T23:59";
+      const deadlineB = b.deadlineDate ? `${b.deadlineDate}T${b.deadlineTime || "23:59"}` : "9999-12-31T23:59";
+      return todayDiff || deadlineA.localeCompare(deadlineB) || new Date(b.updatedAt) - new Date(a.updatedAt);
+    })[0] || null;
+}
+
+function getWorkspacePressure(tasks) {
+  const deadlineTask = tasks
+    .filter((task) => task.status !== "completed" && task.deadlineDate)
+    .sort((a, b) => `${a.deadlineDate}T${a.deadlineTime || "23:59"}`.localeCompare(`${b.deadlineDate}T${b.deadlineTime || "23:59"}`))[0];
+  if (deadlineTask) return `${formatShortDate(deadlineTask.deadlineDate)}${deadlineTask.deadlineTime ? ` ${deadlineTask.deadlineTime}` : ""} 前：${deadlineTask.title}`;
+  const plannedToday = tasks.filter((task) => task.status !== "completed" && task.plannedDate === TODAY).length;
+  if (plannedToday) return `今天有 ${plannedToday} 个任务计划推进。`;
+  return "暂无明确时间压力。";
+}
+
+function getWorkspaceThreadRecords(thread) {
+  const projectId = thread.projectId || thread.id;
+  const taskIds = new Set(getProjectTasks(projectId).map((task) => task.id));
+  const demoRecords = workspaceDemo.records
+    .filter((record) => record.targetId === thread.id || record.targetId === projectId)
+    .map((record) => ({
+      id: record.id,
+      type: record.type,
+      label: workspaceNoteTypeLabels[record.type] || "记录",
+      content: record.content,
+      createdAt: record.createdAt,
+      source: "Demo 浮窗",
+    }));
+  const noteRecords = state.notes
+    .filter((note) => note.projectId === projectId || taskIds.has(note.taskId))
+    .map((note) => ({
+      id: note.id,
+      type: getWorkspaceTypeFromNote(note),
+      label: workspaceNoteTypeLabels[getWorkspaceTypeFromNote(note)] || "记录",
+      content: note.content || getPlainTextFromHtml(note.contentHtml || ""),
+      createdAt: note.updatedAt || note.createdAt,
+      source: "记事本",
+    }));
+  const historyRecords = state.histories
+    .filter((history) => history.projectId === projectId || taskIds.has(history.taskId))
+    .map((history) => ({
+      id: history.id,
+      type: getWorkspaceTypeFromHistory(history),
+      label: workspaceNoteTypeLabels[getWorkspaceTypeFromHistory(history)] || historyLabels[history.type] || "记录",
+      content: historyText(history),
+      createdAt: history.createdAt,
+      source: "任务历史",
+    }));
+  return [...demoRecords, ...noteRecords, ...historyRecords]
+    .filter((record) => record.content)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+}
+
+function getWorkspaceTypeFromNote(note) {
+  const tags = (note.tags || []).join(" ");
+  if (/卡点|卡住/.test(tags)) return "stuck";
+  if (/资料|参考/.test(tags)) return "reference";
+  if (/决策|决定/.test(tags)) return "decision";
+  if (/下次|断点/.test(tags)) return "next";
+  if (/进展|复盘/.test(tags)) return "progress";
+  return "idea";
+}
+
+function getWorkspaceTypeFromHistory(history) {
+  if (history.type === "stuck_note") return "stuck";
+  if (history.type === "progress_note" || history.type === "pomodoro" || history.type === "completed") return "progress";
+  if (history.type === "retrospective") return "decision";
+  return "progress";
+}
+
+function getWorkspaceMockThreads() {
+  const createdAt = nowIso();
+  return [
+    {
+      id: "mock_flowtree",
+      source: "mock",
+      name: "FlowTree 产品设计",
+      currentStatus: "正在从任务管理工具转向多线程上下文工作台。",
+      nextStep: "确定线程卡片字段，并验证线程概览页结构。",
+      blocker: "任务、线程、记录三者边界仍需收束。",
+      pressure: "6/25 前形成作品集可展示 Demo。",
+      todayActive: true,
+      recentRecord: "浮窗是入口，工作台才是核心价值。",
+      updatedAt: createdAt,
+      taskCount: 9,
+      tags: ["产品设计", "卡住", "今日推进"],
+      tree: [
+        makeWorkspaceMockTask("mock_flowtree_position", "产品定位", "in_progress", [
+          makeWorkspaceMockTask("mock_flowtree_user", "明确目标用户"),
+          makeWorkspaceMockTask("mock_flowtree_model", "定义线程模型"),
+          makeWorkspaceMockTask("mock_flowtree_card", "确定工作台卡片字段", "in_progress"),
+        ]),
+        makeWorkspaceMockTask("mock_flowtree_feature", "功能梳理", "not_started", [
+          makeWorkspaceMockTask("mock_flowtree_float", "浮窗快速记录"),
+          makeWorkspaceMockTask("mock_flowtree_notes", "记录文库"),
+          makeWorkspaceMockTask("mock_flowtree_today", "今日任务与截止压力"),
+        ]),
+        makeWorkspaceMockTask("mock_flowtree_engineering", "工程管理", "not_started", [
+          makeWorkspaceMockTask("mock_flowtree_data", "整理数据模型"),
+          makeWorkspaceMockTask("mock_flowtree_split", "拆分 app.js"),
+          makeWorkspaceMockTask("mock_flowtree_ai", "设计 AI 接口"),
+        ]),
+      ],
+      mockRecords: [
+        makeWorkspaceMockRecord("decision", "P1 卡片应该是线程卡，而不是任务卡。", createdAt),
+        makeWorkspaceMockRecord("stuck", "长期任务管理如何和多线程看板结合。", createdAt),
+        makeWorkspaceMockRecord("idea", "浮窗是低摩擦入口，但不是核心产品主体。", createdAt),
+        makeWorkspaceMockRecord("next", "继续讨论线程卡片字段排序。", createdAt),
+      ],
+    },
+    {
+      id: "mock_thesis",
+      source: "mock",
+      name: "毕业论文",
+      currentStatus: "正在收束“AI 促进旅后意义建构”的研究问题。",
+      nextStep: "查找意义建构、心理幸福感、叙事相关量表。",
+      blocker: "自变量和因变量还没完全定下来。",
+      pressure: "下周三前需要向导师汇报。",
+      todayActive: false,
+      recentRecord: "AI 叙事脚手架可能比自动生成故事更关键。",
+      updatedAt: createdAt,
+      taskCount: 4,
+      tags: ["研究", "待拆解"],
+      tree: [makeWorkspaceMockTask("mock_thesis_scale", "查意义建构量表", "not_started"), makeWorkspaceMockTask("mock_thesis_question", "收束研究问题", "stuck")],
+      mockRecords: [makeWorkspaceMockRecord("idea", "AI 叙事脚手架可能比自动生成故事更关键。", createdAt)],
+    },
+    {
+      id: "mock_portfolio",
+      source: "mock",
+      name: "求职作品集",
+      currentStatus: "已有几个项目素材，但作品集结构还没定。",
+      nextStep: "确定作品集里 FlowTree、数学游戏、AI 旅后整理产品的展示顺序。",
+      blocker: "如何体现 AI native 和真实产品能力。",
+      pressure: "6/25 前需要投递一版。",
+      todayActive: true,
+      recentRecord: "作品集不能只展示 UI，需要展示产品判断和项目复盘。",
+      updatedAt: createdAt,
+      taskCount: 5,
+      tags: ["求职", "紧急"],
+      tree: [makeWorkspaceMockTask("mock_portfolio_order", "确定展示顺序", "in_progress"), makeWorkspaceMockTask("mock_portfolio_case", "写 FlowTree 案例", "not_started")],
+      mockRecords: [makeWorkspaceMockRecord("decision", "作品集不能只展示 UI，需要展示产品判断和项目复盘。", createdAt)],
+    },
+    {
+      id: "mock_yuanfudao",
+      source: "mock",
+      name: "猿辅导项目复盘",
+      currentStatus: "正在整理二年级数学游戏项目的产品逻辑和落地过程。",
+      nextStep: "补充需求背景、用户问题、玩法机制和效果评估方式。",
+      blocker: "真实业务指标和数据口径还不够清晰。",
+      pressure: "7 月前整理成简历项目经历。",
+      todayActive: false,
+      recentRecord: "需要把“做了什么”升级成“为什么这样设计”。",
+      updatedAt: createdAt,
+      taskCount: 4,
+      tags: ["实习", "复盘"],
+      tree: [makeWorkspaceMockTask("mock_yuanfudao_background", "补充需求背景"), makeWorkspaceMockTask("mock_yuanfudao_metric", "整理指标口径", "stuck")],
+      mockRecords: [makeWorkspaceMockRecord("next", "需要把“做了什么”升级成“为什么这样设计”。", createdAt)],
+    },
+  ];
+}
+
+function makeWorkspaceMockTask(id, title, status = "not_started", children = []) {
+  return {
+    id,
+    title,
+    status,
+    nextAction: status === "stuck" ? "先写清楚卡住的具体原因。" : "补充一个更小的下一步。",
+    blocker: status === "stuck" ? "还没有明确下一步判断。" : "暂无明确卡点。",
+    deadline: "",
+    children,
+  };
+}
+
+function makeWorkspaceMockRecord(type, content, createdAt) {
+  return {
+    id: createId("workspace_record"),
+    type,
+    label: workspaceNoteTypeLabels[type],
+    content,
+    createdAt,
+    source: "样例",
+  };
+}
+
+function renderWorkspaceDemo() {
+  const threads = getWorkspaceThreads();
+  const inboxRecords = workspaceDemo.records.filter((record) => record.targetId === "inbox");
+  els.appView.innerHTML = `
+    <section class="page workspace-demo-page">
+      <header class="page-header workspace-demo-header">
+        <div>
+          <p class="eyebrow">Workspace Demo v0</p>
+          <h1>工作台</h1>
+          <p>同时查看正在推进的多条线、每条线的状态、卡点、下一步和时间压力。</p>
+        </div>
+        <div class="page-actions">
+          <span class="count-badge">${threads.length}</span>
+          <button class="secondary-button" type="button" data-action="workspace-open-float">打开记录浮窗</button>
+        </div>
+      </header>
+
+      <div class="workspace-thread-grid">
+        ${threads.map(renderWorkspaceThreadCard).join("")}
+      </div>
+
+      ${
+        inboxRecords.length
+          ? `
+            <section class="panel workspace-inbox">
+              <div class="section-header">
+                <div>
+                  <p class="eyebrow">Inbox</p>
+                  <h2>未归属记录</h2>
+                </div>
+                <span class="muted">${inboxRecords.length} 条</span>
+              </div>
+              <div class="workspace-record-feed">${inboxRecords.slice(0, 5).map(renderWorkspaceRecord).join("")}</div>
+            </section>
+          `
+          : ""
+      }
+      ${renderWorkspaceFloatingPanel(threads)}
+    </section>
+  `;
+}
+
+function renderWorkspaceThreadCard(thread) {
+  return `
+    <article class="workspace-thread-card" role="button" tabindex="0" data-action="open-workspace-thread" data-id="${escapeHtml(thread.id)}">
+      <div class="workspace-thread-card-head">
+        <div>
+          <span class="workspace-source">${thread.source === "project" ? "当前数据" : "样例数据"}</span>
+          <h2>${escapeHtml(thread.name)}</h2>
+        </div>
+        <span class="tag ${thread.todayActive ? "today" : ""}">${thread.todayActive ? "今日推进" : "今日未推进"}</span>
+      </div>
+      <dl class="workspace-thread-fields">
+        <div>
+          <dt>当前状态</dt>
+          <dd>${escapeHtml(thread.currentStatus)}</dd>
+        </div>
+        <div>
+          <dt>下一步</dt>
+          <dd>${escapeHtml(thread.nextStep)}</dd>
+        </div>
+        <div>
+          <dt>卡点 / 未决</dt>
+          <dd>${escapeHtml(thread.blocker)}</dd>
+        </div>
+        <div>
+          <dt>时间压力</dt>
+          <dd>${escapeHtml(thread.pressure)}</dd>
+        </div>
+      </dl>
+      <div class="workspace-card-footer">
+        <span class="workspace-recent">${escapeHtml(thread.recentRecord)}</span>
+        <span class="muted">${thread.taskCount} 个任务 · ${formatDateTime(thread.updatedAt)}</span>
+      </div>
+      <div class="tag-row">${thread.tags.map((tag) => `<span class="tag">#${escapeHtml(tag)}</span>`).join("")}</div>
+    </article>
+  `;
+}
+
+function renderWorkspaceThread(route) {
+  const thread = getWorkspaceThread(route.threadId);
+  if (!thread) {
+    navigate("workspace-demo");
+    return;
+  }
+  const threads = getWorkspaceThreads();
+  const selectedTask = getWorkspaceSelectedTask(thread);
+  const recentRecords = thread.source === "mock" ? getWorkspaceMockAndDemoRecords(thread) : getWorkspaceThreadRecords(thread);
+  els.appView.innerHTML = `
+    <section class="page workspace-thread-page">
+      <nav class="board-breadcrumb" aria-label="当前位置">
+        <button class="breadcrumb-back" type="button" data-action="workspace-return">← 工作台</button>
+        <span class="breadcrumb-separator" aria-hidden="true">/</span>
+        <span class="breadcrumb-task current" aria-current="page">${escapeHtml(thread.name)}</span>
+      </nav>
+
+      <header class="workspace-summary panel">
+        <div>
+          <p class="eyebrow">Thread</p>
+          <h1>${escapeHtml(thread.name)}</h1>
+        </div>
+        <div class="workspace-summary-grid">
+          <div><strong>当前状态</strong><span>${escapeHtml(thread.currentStatus)}</span></div>
+          <div><strong>下一步</strong><span>${escapeHtml(thread.nextStep)}</span></div>
+          <div><strong>卡点 / 未决</strong><span>${escapeHtml(thread.blocker)}</span></div>
+          <div><strong>时间压力</strong><span>${escapeHtml(thread.pressure)}</span></div>
+          <div><strong>今日推进</strong><span>${thread.todayActive ? "是" : "否"}</span></div>
+        </div>
+        <div class="page-actions">
+          <button class="primary-button ${workspaceDemo.foregroundId === thread.id ? "active" : ""}" type="button" data-action="workspace-set-foreground" data-id="${escapeHtml(thread.id)}">
+            ${workspaceDemo.foregroundId === thread.id ? "当前前台" : "设为当前前台"}
+          </button>
+          <button class="secondary-button" type="button" data-action="workspace-demo-noop">加入今日</button>
+          <button class="secondary-button" type="button" data-action="workspace-open-float-for" data-id="${escapeHtml(thread.id)}">标记断点</button>
+          <button class="secondary-button" type="button" data-action="workspace-demo-noop">新增任务</button>
+          <button class="secondary-button" type="button" data-action="workspace-open-float-for" data-id="${escapeHtml(thread.id)}">新增记录</button>
+        </div>
+      </header>
+
+      <div class="workspace-overview-layout">
+        <section class="panel workspace-tree-panel">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Task Tree</p>
+              <h2>任务树</h2>
+            </div>
+            <span class="muted">点击节点打开右侧抽屉</span>
+          </div>
+          <div class="workspace-task-tree">
+            ${renderWorkspaceTaskTree(thread)}
+          </div>
+        </section>
+
+        <aside class="workspace-task-drawer ${selectedTask ? "open" : ""}">
+          ${selectedTask ? renderWorkspaceTaskDrawer(thread, selectedTask) : renderWorkspaceTaskDrawerEmpty()}
+        </aside>
+      </div>
+
+      <section class="panel workspace-records-panel">
+        <div class="section-header">
+          <div>
+            <p class="eyebrow">Recent Notes</p>
+            <h2>最近记录</h2>
+          </div>
+          <span class="muted">${recentRecords.length} 条</span>
+        </div>
+        <div class="workspace-record-feed">
+          ${recentRecords.length ? recentRecords.slice(0, 8).map(renderWorkspaceRecord).join("") : `<div class="empty-state">还没有记录。</div>`}
+        </div>
+      </section>
+      ${renderWorkspaceFloatingPanel(threads)}
+    </section>
+  `;
+}
+
+function renderWorkspaceTaskTree(thread) {
+  if (thread.source === "mock") return thread.tree.map((task) => renderWorkspaceMockTaskLine(task, 0)).join("");
+  const project = getProject(thread.projectId);
+  if (!project?.topLevelTaskIds.length) return `<div class="empty-state">还没有任务。</div>`;
+  return project.topLevelTaskIds.map((taskId) => renderWorkspaceTaskLine(taskId, 0)).join("");
+}
+
+function renderWorkspaceTaskLine(taskId, depth) {
+  const task = getTask(taskId);
+  if (!task) return "";
+  const active = workspaceDemo.selectedTaskId === task.id;
+  return `
+    <div>
+      <button class="workspace-task-line ${active ? "active" : ""} ${task.status === "completed" ? "completed" : ""}" type="button" style="--depth:${depth}" data-action="workspace-select-task" data-id="${task.id}">
+        <span>${escapeHtml(task.title)}</span>
+        <span class="tag ${task.status}">${statusLabels[task.status]}</span>
+      </button>
+      ${task.childIds.map((childId) => renderWorkspaceTaskLine(childId, depth + 1)).join("")}
+    </div>
+  `;
+}
+
+function renderWorkspaceMockTaskLine(task, depth) {
+  const active = workspaceDemo.selectedTaskId === task.id;
+  return `
+    <div>
+      <button class="workspace-task-line ${active ? "active" : ""} ${task.status === "completed" ? "completed" : ""}" type="button" style="--depth:${depth}" data-action="workspace-select-task" data-id="${task.id}">
+        <span>${escapeHtml(task.title)}</span>
+        <span class="tag ${task.status}">${statusLabels[task.status] || "待做"}</span>
+      </button>
+      ${(task.children || []).map((child) => renderWorkspaceMockTaskLine(child, depth + 1)).join("")}
+    </div>
+  `;
+}
+
+function getWorkspaceSelectedTask(thread) {
+  if (!workspaceDemo.selectedTaskId) return null;
+  if (thread.source === "mock") return findWorkspaceMockTask(thread.tree, workspaceDemo.selectedTaskId);
+  const task = getTask(workspaceDemo.selectedTaskId);
+  return task?.projectId === thread.projectId ? task : null;
+}
+
+function findWorkspaceMockTask(tasks, taskId) {
+  for (const task of tasks || []) {
+    if (task.id === taskId) return task;
+    const nested = findWorkspaceMockTask(task.children, taskId);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function renderWorkspaceTaskDrawer(thread, task) {
+  const isRealTask = thread.source === "project";
+  const relatedNotes = isRealTask
+    ? state.notes.filter((note) => note.taskId === task.id).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
+    : [];
+  return `
+    <header class="workspace-drawer-head">
+      <div>
+        <p class="eyebrow">Task</p>
+        <h2>${escapeHtml(task.title)}</h2>
+      </div>
+      <button class="icon-button" type="button" data-action="workspace-close-task" aria-label="关闭任务抽屉">×</button>
+    </header>
+    <div class="workspace-drawer-body">
+      <dl class="workspace-task-detail">
+        <div><dt>所属线程</dt><dd>${escapeHtml(thread.name)}</dd></div>
+        <div><dt>状态</dt><dd>${escapeHtml(statusLabels[task.status] || "待做")}</dd></div>
+        <div><dt>下一步</dt><dd>${escapeHtml(task.nextAction || "补充一个更小的下一步。")}</dd></div>
+        <div><dt>卡点</dt><dd>${escapeHtml(task.status === "stuck" ? getWorkspaceBlocker(task) : task.blocker || "暂无明确卡点。")}</dd></div>
+        <div><dt>截止时间</dt><dd>${escapeHtml(task.deadlineDate ? `${formatShortDate(task.deadlineDate)}${task.deadlineTime ? ` ${task.deadlineTime}` : ""}` : task.deadline || "暂无")}</dd></div>
+        <div><dt>子任务</dt><dd>${escapeHtml(isRealTask ? `${task.childIds.length} 个` : `${(task.children || []).length} 个`)}</dd></div>
+      </dl>
+      <div>
+        <h3>相关记录</h3>
+        <div class="workspace-mini-records">
+          ${
+            relatedNotes.length
+              ? relatedNotes.slice(0, 3).map((note) => `<p>${escapeHtml(note.content || getPlainTextFromHtml(note.contentHtml || ""))}</p>`).join("")
+              : `<p class="muted">暂无任务记录。</p>`
+          }
+        </div>
+      </div>
+      <div class="card-actions">
+        <button class="secondary-button" type="button" data-action="workspace-open-float-for" data-id="${escapeHtml(thread.id)}">记录进展</button>
+        <button class="secondary-button" type="button" data-action="workspace-open-float-for" data-id="${escapeHtml(thread.id)}">标记卡点</button>
+        <button class="secondary-button" type="button" data-action="workspace-demo-noop">添加子任务</button>
+        <button class="secondary-button" type="button" data-action="workspace-demo-noop">加入今日</button>
+        <button class="primary-button" type="button" data-action="workspace-demo-noop">完成</button>
+      </div>
+      <button class="quiet-button workspace-more-button" type="button" data-action="workspace-demo-noop">更多：任务设置 / 删除任务</button>
+    </div>
+  `;
+}
+
+function renderWorkspaceTaskDrawerEmpty() {
+  return `
+    <div class="workspace-drawer-empty">
+      <p class="eyebrow">Task Detail</p>
+      <h2>选择一个任务节点</h2>
+      <p>任务详情会在这里以抽屉形式打开，不离开线程概览页。</p>
+    </div>
+  `;
+}
+
+function getWorkspaceMockAndDemoRecords(thread) {
+  const demoRecords = workspaceDemo.records
+    .filter((record) => record.targetId === thread.id)
+    .map((record) => ({
+      ...record,
+      label: workspaceNoteTypeLabels[record.type] || "记录",
+      source: "Demo 浮窗",
+    }));
+  return [...demoRecords, ...(thread.mockRecords || [])].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+}
+
+function renderWorkspaceRecord(record) {
+  return `
+    <article class="workspace-record-item">
+      <span class="workspace-record-type ${record.type}">${escapeHtml(record.label || workspaceNoteTypeLabels[record.type] || "记录")}</span>
+      <p>${escapeHtml(record.content)}</p>
+      <small>${escapeHtml(record.source || "记录")} · ${formatDateTime(record.createdAt)}</small>
+    </article>
+  `;
+}
+
+function renderWorkspaceFloatingPanel(threads) {
+  const selectedTarget = threads.some((thread) => thread.id === workspaceDemo.foregroundId) ? workspaceDemo.foregroundId : "inbox";
+  if (!workspaceDemo.floatingOpen) {
+    return `
+      <button class="workspace-floating-button" type="button" data-action="workspace-toggle-float" aria-label="打开工作台记录浮窗">
+        <span>#</span>
+        <strong>记录</strong>
+      </button>
+    `;
+  }
+  return `
+    <aside class="workspace-floating-panel" aria-label="工作台记录浮窗">
+      <header>
+        <strong>快速记录</strong>
+        <button class="icon-button" type="button" data-action="workspace-toggle-float" aria-label="收起工作台记录浮窗">×</button>
+      </header>
+      <label>
+        当前归属
+        <select id="workspaceFloatTarget">
+          ${threads.map((thread) => `<option value="${escapeHtml(thread.id)}" ${selectedTarget === thread.id ? "selected" : ""}>${escapeHtml(thread.name)}</option>`).join("")}
+          <option value="inbox" ${selectedTarget === "inbox" ? "selected" : ""}>先放入 Inbox</option>
+        </select>
+      </label>
+      <label>
+        记录类型
+        <select id="workspaceFloatType">
+          ${Object.entries(workspaceNoteTypeLabels).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}
+        </select>
+      </label>
+      <label>
+        内容
+        <textarea id="workspaceFloatContent" rows="5" placeholder="写下断点、卡点、资料或下一步"></textarea>
+      </label>
+      <button class="primary-button" type="button" data-action="workspace-save-note">保存记录</button>
+    </aside>
+  `;
+}
+
+function saveWorkspaceFloatingNote() {
+  const targetId = document.querySelector("#workspaceFloatTarget")?.value || "inbox";
+  const type = document.querySelector("#workspaceFloatType")?.value || "idea";
+  const content = document.querySelector("#workspaceFloatContent")?.value.trim() || "";
+  if (!content) {
+    showToast("先写一点内容。");
+    return;
+  }
+  workspaceDemo.records.unshift({
+    id: createId("workspace_record"),
+    targetId,
+    type,
+    content,
+    createdAt: nowIso(),
+  });
+  workspaceDemo.foregroundId = targetId;
+  workspaceDemo.floatingOpen = false;
+  saveWorkspaceDemoState();
+  showToast(targetId === "inbox" ? "已保存到 Demo Inbox。" : "已保存到线程最近记录。");
+  render();
 }
 
 function getNotesOverview() {
@@ -2607,6 +3255,10 @@ function selectProjectRoot(projectId) {
 
 function goBack() {
   const route = getRoute();
+  if (route.name === "workspaceThread") {
+    navigate("workspace-demo");
+    return;
+  }
   if (route.name === "board") {
     returnFromBoard();
     return;
@@ -4094,6 +4746,37 @@ async function handleAction(action, trigger) {
   }
   if (action === "confirm-pending-task") confirmPendingTask(id);
   if (action === "confirm-pending-note") confirmPendingNote(id);
+  if (action === "open-workspace-thread") navigate(`workspace-demo/thread/${id}`);
+  if (action === "workspace-return") navigate("workspace-demo");
+  if (action === "workspace-select-task") {
+    workspaceDemo.selectedTaskId = id;
+    saveWorkspaceDemoState();
+    render();
+  }
+  if (action === "workspace-close-task") {
+    workspaceDemo.selectedTaskId = "";
+    saveWorkspaceDemoState();
+    render();
+  }
+  if (action === "workspace-toggle-float" || action === "workspace-open-float") {
+    workspaceDemo.floatingOpen = action === "workspace-open-float" ? true : !workspaceDemo.floatingOpen;
+    saveWorkspaceDemoState();
+    render();
+  }
+  if (action === "workspace-open-float-for") {
+    workspaceDemo.foregroundId = id || "inbox";
+    workspaceDemo.floatingOpen = true;
+    saveWorkspaceDemoState();
+    render();
+  }
+  if (action === "workspace-set-foreground") {
+    workspaceDemo.foregroundId = id || "inbox";
+    saveWorkspaceDemoState();
+    showToast("已设为 Demo 当前前台。");
+    render();
+  }
+  if (action === "workspace-save-note") saveWorkspaceFloatingNote();
+  if (action === "workspace-demo-noop") showToast("Demo v0 暂不写入真实任务数据。");
   if (action === "add-project") openAddProjectForm();
   if (action === "open-project") openProject(id);
   if (action === "open-doing-task" || action === "open-note-task") {
